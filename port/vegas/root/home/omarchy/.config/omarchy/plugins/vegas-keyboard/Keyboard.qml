@@ -11,8 +11,8 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "Keys"
-    fontSize: Style.font.caption
+    text: "\uf11c"  // Nerd Font keyboard icon
+    fontSize: Style.font.body
     horizontalMargin: 12
     tooltipText: "Show or hide keyboard"
     onPressed: if (root.bar) root.bar.run("vegas-toggle-keyboard")

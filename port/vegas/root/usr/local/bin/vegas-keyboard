@@ -1,5 +1,14 @@
 #!/bin/bash
 # Both autostart and the Keys button use the same geometry and layout.
+# wvkbd sizes are logical pixels: divide by the output scale so the keyboard
+# stays ~675 px (~44 mm) tall on the panel whatever OMARCHY_SCALE is.
 export WVKBD_IMMEDIATE_DRAW=1
-exec wvkbd-mobintl -H 450 -L 240 --fn 'Sans 20' -l phone,special,full \
-  --margin-bottom 32 --no-popup "$@"
+scale=${OMARCHY_SCALE:-1.5}
+px() { awk -v v="$1" -v s="$scale" 'BEGIN { printf "%d", v / s + 0.5 }'; }
+wvkbd-mobintl -H "$(px 675)" -L "$(px 360)" --fn "Sans $(px 30)" \
+  -l phone,special,full --margin-bottom "$(px 48)" --no-popup "$@" &
+keyboard=$!
+# wvkbd first draws at 1x and only adopts a fractional output scale when its
+# surface is re-created; hide and re-show it once so it renders sharply.
+(sleep 2; kill -RTMIN "$keyboard"; sleep 0.5; kill -RTMIN "$keyboard") 2>/dev/null &
+wait "$keyboard"

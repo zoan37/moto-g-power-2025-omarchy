@@ -1,0 +1,11 @@
+#!/bin/bash
+# Phone UI scale for the next desktop start. The 1080x2388 panel divides
+# evenly at these scales (logical width 720, 540, 450, 360).
+setting="$HOME/.config/vegas/scale"
+case ${1:-status} in
+  1.5|2|2.4|3)
+    mkdir -p "${setting%/*}"; printf '%s\n' "$1" >"$setting"
+    printf 'Scale %s selected; reboot to apply.\n' "$1" ;;
+  status) printf 'Next desktop: %s (default 2.4)\n' "$(cat "$setting" 2>/dev/null || echo 2.4)" ;;
+  *) printf 'Usage: vegas-scale 1.5|2|2.4|3|status\n' >&2; exit 2 ;;
+esac

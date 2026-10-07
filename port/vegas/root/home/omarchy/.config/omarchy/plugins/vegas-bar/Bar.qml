@@ -327,16 +327,19 @@ Item {
   }
 
   readonly property bool vertical: position === "left" || position === "right"
-  // Initial conservative insets, pending a physical phone fit check.
-  // Values are logical pixels; the native portrait session uses scale 1.5.
+  // The top safe area is a physical size on the panel (~84 px clears the
+  // camera and top corners), converted to logical pixels at the session's
+  // OMARCHY_SCALE so it stays put when the UI scale changes. The side inset is
+  // Hyprland's gaps_out (10), so the bar lines up with the window borders.
+  readonly property real phoneScale: Number(Quickshell.env("OMARCHY_SCALE")) || 1.5
   function phoneMetric(key, fallback, maximum) {
     var value = root.barConfig ? root.barConfig[key] : undefined
     var number = Number(value)
     return value !== undefined && isFinite(number) && number >= 0 && number <= maximum
       ? Math.round(number) : fallback
   }
-  readonly property int phoneSafeTop: phoneMetric("phoneSafeTop", 56, 128)
-  readonly property int phoneSideInset: phoneMetric("phoneSideInset", 20, 64)
+  readonly property int phoneSafeTop: phoneMetric("phoneSafeTop", Math.round(84 / phoneScale), 128)
+  readonly property int phoneSideInset: phoneMetric("phoneSideInset", 10, 64)
   readonly property int barSize: vertical ? Style.bar.sizeVertical : Math.max(Style.bar.sizeHorizontal, phoneMetric("phoneBarHeight", 48, 96))
 
   function normalizePosition(value) {

@@ -55,7 +55,10 @@ export QT_QPA_PLATFORM=wayland GDK_BACKEND=wayland SDL_VIDEODRIVER=wayland
 export NO_AT_BRIDGE=1 QT_ACCESSIBILITY=0 GTK_A11Y=none
 export OMARCHY_PATH=/usr/share/omarchy OMARCHY_GPU_MODE=software
 [[ -f /run/vegas-gpu-ready ]] && export OMARCHY_GPU_MODE=mali
-export OMARCHY_OUTPUT_WIDTH=1080 OMARCHY_OUTPUT_HEIGHT=2388 OMARCHY_REFRESH_MHZ="$refresh" OMARCHY_SCALE=1.5
+# UI scale for the 1080x2388 panel (vegas-scale); 2.4 is a 450-pt-wide phone layout.
+ui_scale=$(cat "$HOME/.config/vegas/scale" 2>/dev/null) || ui_scale=2.4
+case $ui_scale in 1.5|2|2.4|3) ;; *) ui_scale=2.4 ;; esac
+export OMARCHY_OUTPUT_WIDTH=1080 OMARCHY_OUTPUT_HEIGHT=2388 OMARCHY_REFRESH_MHZ="$refresh" OMARCHY_SCALE="$ui_scale"
 # Select the ARM bundle's service-free launchers on this native Arch boot.
 export OMARCHY_PROOT=1 XWAYLAND_NO_GLAMOR=1 WVKBD_IMMEDIATE_DRAW=1
 dbus-run-session --config-file="$HOME/.config/omarchy/proot-session-bus.conf" \

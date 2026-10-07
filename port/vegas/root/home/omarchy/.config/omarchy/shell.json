@@ -6,8 +6,6 @@
   },
   "bar": {
     "id": "vegas.bar",
-    "phoneSafeTop": 56,
-    "phoneSideInset": 20,
     "phoneBarHeight": 48,
     "position": "top",
     "transparent": false,
