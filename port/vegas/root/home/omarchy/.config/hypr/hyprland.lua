@@ -39,5 +39,10 @@ require("default.hypr.toggles")
 -- Add any other personal Hyprland configuration below.
 -- o.window("qemu", { workspace = "5" })
 
+-- Phone: one app per screen, like Android/iOS. Each new tiled window opens on
+-- the next empty workspace and fills it; tap the bar's workspace numbers to
+-- switch apps. (Hyprland only resizes borders by mouse, not touch.)
+hl.window_rule({ match = { float = false }, workspace = "empty" })
+
 -- Prefer the native supervisor adapters in /usr/local/bin.
 hl.env("PATH", "/opt/omarchy-android/hyprland/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/usr/share/omarchy/bin")
