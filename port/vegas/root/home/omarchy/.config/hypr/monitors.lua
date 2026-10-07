@@ -5,7 +5,9 @@ local output_height = tonumber(os.getenv("OMARCHY_OUTPUT_HEIGHT"))
 local refresh_mhz = tonumber(os.getenv("OMARCHY_REFRESH_MHZ"))
 -- Keep Omarchy's conventional variable names: its Display panel updates
 -- these declarations in place, which lets scale changes survive a restart.
-local omarchy_monitor_scale = tonumber(os.getenv("OMARCHY_SCALE")) or 2
+-- Single source of truth for the UI scale: the Display panel and vegas-scale
+-- rewrite this line, and the launchers read it for the keyboard and bar.
+local omarchy_monitor_scale = 2.4
 local omarchy_gdk_scale = math.floor(omarchy_monitor_scale + 0.5)
 local output_mode = "preferred"
 
