@@ -201,3 +201,23 @@ then direct-DRM + GPU (needs scanout-capable buffers imported into kbase).
 | **GPU, direct KMS 120 Hz (default)** | **7 ms** | **13–16 ms** |
 
 Hyprland uses ~9% CPU on the GPU path (vs ~380% peak on llvmpipe).
+
+## Wi-Fi (2026-10-07)
+
+MT6835 + MT6631 A-die via MediaTek's WMT stack, no Android userspace:
+stock vendor_dlkm modules (ORDER in /opt/vegas-wifi/ORDER: ccci/mddp deps,
+btif_drv, connadp, wmt_drv; then after the loader handshake wmt_chrdev_wifi,
+wlan_drv_gen4m_6835, connfem) + Muzuwi/wmt-pyloader's loader/launcher
+(third_party/wmt-pyloader; matches Motorola's wmt_loader disassembly). No
+firmware files are requested on this SoC. iwd cannot work (kernel lacks
+CRYPTO_USER_API_*), so wpa_supplicant (ctrl socket group omarchy) + dhcpcd.
+native-init starts /usr/local/libexec/vegas/wifi-up in the background;
+`vegas-wifi scan|connect|status|forget`; ~/.config/vegas/wifi-off disables.
+Connected to the home 2.4 GHz network (key copied from the laptop's
+NetworkManager over USB without printing it); DNS/HTTPS verified.
+
+Grok Bot: built from omarchy-pkgs/pkgbuilds/grok-bot for aarch64 on the laptop
+(makepkg CARCH=aarch64; upstream arm64 .deb sha256 matched the PKGBUILD) and
+installed with pacman -U. Needs --no-sandbox (~/.config/grok-bot-flags.conf)
+because CONFIG_USER_NS is off. Renders in software for now (GPU process does
+not use the kbase driver).

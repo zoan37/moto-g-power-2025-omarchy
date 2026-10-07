@@ -1,0 +1,43 @@
+#!/bin/bash
+# Root: bring up the MT6835 connectivity stack and Wi-Fi, then keep
+# wpa_supplicant (user-controllable via wpa_cli) and dhcpcd running.
+# Stock vendor_dlkm modules + wmt-pyloader's loader/launcher (no Android).
+set -u
+base=/opt/vegas-wifi
+[[ -f /home/omarchy/.config/vegas/wifi-off ]] && { echo 'Wi-Fi disabled by ~/.config/vegas/wifi-off'; exit 0; }
+mknodes() {
+  local e n d ma mi
+  for e in /sys/dev/char/*/uevent; do
+    n=$(grep -m1 DEVNAME "$e" | cut -d= -f2)
+    case $n in wmtdetect|stpwmt|wmtWifi|connfem)
+      d=$(dirname "$e"); IFS=: read -r ma mi <"$d/dev"
+      rm -f "/dev/$n"; mknod "/dev/$n" c "$ma" "$mi" ;;
+    esac
+  done
+}
+cd "$base/modules" || exit 1
+sha256sum --quiet -c SHA256SUMS || exit 1
+# The Wi-Fi driver and its chrdev must load only after the loader handshake.
+while read -r name file; do
+  case $name in wmt_chrdev_wifi|wlan_drv_gen4m_6835|connfem) continue ;; esac
+  [[ -d /sys/module/$name ]] || timeout -k 2 15 insmod "$file" || { echo "insmod $name failed"; exit 1; }
+done <ORDER
+mknodes
+cd "$base/pyl" && timeout 30 python3 vegas_wifi.py loader || { echo 'WMT loader failed'; exit 1; }
+cd "$base/modules"
+for name in wmt_chrdev_wifi wlan_drv_gen4m_6835 connfem; do
+  [[ -d /sys/module/$name ]] || timeout -k 2 20 insmod "$name.ko"
+done
+mknodes
+cd "$base/pyl" && setsid python3 vegas_wifi.py launcher >>/var/log/vegas/wifi-launcher.log 2>&1 </dev/null &
+for i in {1..30}; do [[ -e /sys/class/net/wlan0 ]] && break; sleep 1; done
+[[ -e /sys/class/net/wlan0 ]] || { echo 'wlan0 did not appear'; exit 1; }
+ip link set wlan0 up
+conf=/var/lib/vegas/wpa_supplicant.conf
+if [[ ! -f $conf ]]; then
+  umask 077
+  printf 'ctrl_interface=DIR=/run/wpa_supplicant GROUP=omarchy\nupdate_config=1\ncountry=US\n' >"$conf"
+fi
+wpa_supplicant -B -i wlan0 -D nl80211 -c "$conf" -s </dev/null >/dev/null 2>&1
+dhcpcd -b -q wlan0 </dev/null >/dev/null 2>&1
+echo "Wi-Fi up: $(cat /sys/class/net/wlan0/address)"

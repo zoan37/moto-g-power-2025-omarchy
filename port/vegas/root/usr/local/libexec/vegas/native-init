@@ -125,6 +125,9 @@ if (( gpu )) && ! timeout -k 2 60 "$helper/gpu-prepare" >>/var/log/vegas/gpu-pre
   echo 'GPU preparation failed; using the original software desktop.'
 fi
 
+# Wi-Fi in the background so it never delays the desktop.
+"$helper/wifi-up" >>/var/log/vegas/wifi.log 2>&1 &
+
 runuser -u omarchy -- env HOME=/home/omarchy USER=omarchy LOGNAME=omarchy \
   /usr/local/bin/vegas-desktop >>/var/log/vegas/desktop.log 2>&1 &
 while true; do wait -n || sleep 1; done

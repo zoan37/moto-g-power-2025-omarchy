@@ -1,0 +1,33 @@
+#!/bin/bash
+# Phone Wi-Fi via wpa_supplicant (iwd needs kernel AF_ALG, which this kernel lacks).
+w() { wpa_cli -i wlan0 "$@"; }
+case ${1:-status} in
+  scan)
+    w scan >/dev/null; sleep 4
+    w scan_results | awk -F'\t' 'NR>1 && $5!="" {print $3" dBm  "$5}' | sort -rn | awk '!seen[$0]++' ;;
+  connect)
+    read -rp 'Network name: ' ssid
+    read -rsp 'Password (blank for open): ' pass; echo
+    id=$(w add_network | tail -1)
+    w set_network "$id" ssid "\"$ssid\"" >/dev/null
+    if [[ -n $pass ]]; then
+      psk=$(wpa_passphrase "$ssid" "$pass" | sed -n 's/^\tpsk=//p')
+      w set_network "$id" psk "$psk" >/dev/null
+    else
+      w set_network "$id" key_mgmt NONE >/dev/null
+    fi
+    unset pass psk
+    w enable_network "$id" >/dev/null; w select_network "$id" >/dev/null; w save_config >/dev/null
+    for i in {1..20}; do
+      sleep 1
+      ip -4 -br addr show wlan0 | grep -q '[0-9]\.' && { printf 'Connected: %s\n' "$(ip -4 -br addr show wlan0)"; exit 0; }
+    done
+    printf 'Not connected yet; check the password, then: vegas-wifi status\n' ;;
+  forget)
+    w list_networks | awk -F'\t' -v s="${2:-}" 'NR>1 && (s=="" || $2==s) {print $1}' |
+      while read -r id; do w remove_network "$id" >/dev/null; done
+    w save_config >/dev/null; echo 'Forgotten.' ;;
+  status)
+    w status | grep -E '^(wpa_state|ssid|ip_address|freq)='; ip -4 -br addr show wlan0 ;;
+  *) echo 'Usage: vegas-wifi scan|connect|status|forget [ssid]' >&2; exit 2 ;;
+esac
