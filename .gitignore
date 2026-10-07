@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+third_party/
+private/
+firmware/
+backups/
+artifacts/
+vm/
+*.img
+*.qcow2
+*.raw
+*.bin
+*.zip
+*.tar*
+*.log

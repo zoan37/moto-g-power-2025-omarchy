@@ -1,0 +1,19 @@
+diff --git i/src/c11/threads.h w/src/c11/threads.h
+index 59baea1..d6f5fb3 100644
+--- i/src/c11/threads.h
++++ w/src/c11/threads.h
+@@ -37,6 +37,14 @@
+ #include <limits.h>
+ #include <stdlib.h>
+ 
++/* Recent glibc exposes call_once from stdlib.h. Keep this older Mesa's
++ * private pthread-based C11 implementation in its own namespace. */
++#if !defined(HAVE_THRD_CREATE)
++#undef ONCE_FLAG_INIT
++#define once_flag mesa_once_flag
++#define call_once mesa_call_once
++#endif
++
+ #if defined(_WIN32) && !defined(HAVE_PTHREAD)
+ #  include <io.h> /* close */
+ #  include <process.h> /* _exit */

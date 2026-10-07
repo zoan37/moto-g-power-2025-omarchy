@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+vm_dir="$project_dir/vm"
+[[ $# == 0 || ( $# == 1 && $1 == "--check" ) ]] || { echo "Usage: $0 [--check]" >&2; exit 2; }
+[[ -f $vm_dir/archarm.raw ]] || { echo "Missing $vm_dir/archarm.raw; see notes/arm-vm.md" >&2; exit 1; }
+# Read the guest's current kernel so guest upgrades do not leave this launcher
+# using an old external kernel with a newer set of modules on the root disk.
+rm -f -- "$vm_dir/Image.next"
+debugfs -R "dump /boot/Image \"$vm_dir/Image.next\"" "$vm_dir/archarm.raw"
+[[ -s $vm_dir/Image.next ]] || { echo "Could not extract the guest kernel" >&2; exit 1; }
+mv -- "$vm_dir/Image.next" "$vm_dir/Image"
+if [[ ${1:-} == "--check" ]]; then
+  qemu-system-aarch64 --version
+  echo "VM disk and its current kernel are ready."
+  exit 0
+fi
+exec qemu-system-aarch64 \
+  -machine virt -cpu cortex-a72 -accel tcg -smp 2 -m 2048 \
+  -kernel "$vm_dir/Image" \
+  -append 'root=/dev/vda rw console=ttyAMA0' \
+  -drive "file=$vm_dir/archarm.raw,format=raw,if=none,id=rootdisk" \
+  -device virtio-blk-pci,drive=rootdisk \
+  -nic user,model=virtio-net-pci \
+  -nographic

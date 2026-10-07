@@ -1,0 +1,39 @@
+#!/bin/bash
+# Optional, one-boot native Mali trial. Called by the native root supervisor.
+set -euo pipefail
+[[ $(id -u) == 0 ]]
+[[ $(findmnt -n -o SOURCE /) == '/dev/mmcblk0p1[/omarchy]' ]]
+[[ $(uname -r) == '5.15.180-android13-8-00021-g46a5565a0982-ab13743836' ]]
+[[ $(cat /proc/sys/kernel/hostname) == moto-vegas ]]
+[[ $(cat /sys/class/power_supply/battery/temp) -lt 350 ]]
+modules=/opt/vegas-gpu/stock-modules
+prefix=/opt/vegas-gpu/mesa-kbase
+cd "$modules"
+sha256sum --quiet -c SHA256SUMS
+[[ $(sha256sum "$prefix/lib/dri/panfrost_kbase_dri.so" | cut -d' ' -f1) == 69652ad13a5c72809ad9a7acb7e5f2522bc4a19fca6395b91f0f4e87b47417ad ]]
+token=$(mktemp /run/vegas-gpu-watchdog.XXXXXX)
+(sleep 90; [[ -f $token ]] && /usr/local/libexec/vegas/power-transition reboot) &
+watchdog=$!
+trap 'rm -f "$token"; kill "$watchdog" 2>/dev/null || true' EXIT
+while read -r name file; do
+  [[ $name =~ ^[a-zA-Z0-9_]+$ && $file =~ ^[a-zA-Z0-9_.-]+$ ]]
+  if [[ ! -d /sys/module/$name ]]; then
+    printf 'LOAD:%s\n' "$name"
+    timeout -k 2 12 insmod "$file"
+  fi
+done <ORDER
+for attempt in {1..50}; do
+  [[ -r /sys/class/misc/mali0/dev ]] && break
+  sleep .1
+done
+IFS=: read -r major minor </sys/class/misc/mali0/dev
+[[ $major =~ ^[0-9]+$ && $minor =~ ^[0-9]+$ ]]
+[[ -e /dev/mali0 ]] || mknod /dev/mali0 c "$major" "$minor"
+chown omarchy:video /dev/mali0
+chmod 0660 /dev/mali0
+ulimit -c 0
+runuser -u omarchy -- env -u LIBGL_ALWAYS_SOFTWARE -u GALLIUM_DRIVER \
+  -u MESA_LOADER_DRIVER_OVERRIDE LD_LIBRARY_PATH="$prefix/lib" \
+  LIBGL_DRIVERS_PATH="$prefix/lib/dri" timeout -k 2 15 "$prefix/egl-smoke"
+touch /run/vegas-gpu-ready
+echo 'Native Mali render probe passed; GPU desktop trial enabled for this boot.'

@@ -1,0 +1,14 @@
+#!/bin/bash
+# Nested Hyprland rate (Weston drives the panel at 60, or 120 when this is 120).
+setting="$HOME/.config/vegas/refresh-mhz"
+case ${1:-status} in
+  30|60|120)
+    mkdir -p "${setting%/*}"
+    printf '%s000\n' "$1" >"$setting.new" && mv -f "$setting.new" "$setting"
+    printf '%s Hz selected for the next desktop start. Reboot to compare.\n' "$1" ;;
+  status)
+    value=$(cat "$setting" 2>/dev/null) || value=30000
+    case $value in 30000|60000|120000) ;; *) value=30000 ;; esac
+    printf 'Next desktop: %s Hz (currently running rate may differ).\n' "$((value / 1000))" ;;
+  *) printf 'Usage: vegas-refresh 30|60|120|status\n' >&2; exit 2 ;;
+esac

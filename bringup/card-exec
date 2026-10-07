@@ -1,0 +1,21 @@
+#!/bin/sh
+# Local development endpoint, bound only to the isolated USB link.
+printf 'Content-Type: text/plain\r\n\r\n'
+. /bin/card-guard
+[ "$REQUEST_METHOD" = POST ] || fail 'POST required'
+guard_card "$QUERY_STRING"
+case "$CONTENT_LENGTH" in ''|*[!0-9]*) fail 'invalid script length' ;; esac
+[ "$CONTENT_LENGTH" -gt 0 ] && [ "$CONTENT_LENGTH" -le 131072 ] || fail 'script too large'
+dd bs=1 count="$CONTENT_LENGTH" of=/run/card-command.sh 2>/dev/null
+[ "$(wc -c </run/card-command.sh)" = "$CONTENT_LENGTH" ] || fail 'short command upload'
+mount_card
+mkdir -p /mnt/arch/dev /mnt/arch/proc /mnt/arch/sys /mnt/arch/run
+for name in dev proc sys run; do
+    mount --bind "/$name" "/mnt/arch/$name" || fail 'bind mount failed'
+done
+cp /run/card-command.sh /mnt/arch/.provision/command.sh
+timeout 110 chroot /mnt/arch /bin/bash /.provision/command.sh 2>&1
+result=$?
+sync
+for name in run sys proc dev; do umount "/mnt/arch/$name"; done
+echo "CARD_COMMAND_STATUS:$result"

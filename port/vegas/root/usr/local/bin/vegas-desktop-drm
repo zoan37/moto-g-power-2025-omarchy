@@ -1,0 +1,41 @@
+#!/bin/bash
+# Hyprland directly on the MediaTek DSI KMS device: no nested Weston, and
+# libinput gives Hyprland native touch (vegas-touch-pointer must not run).
+# Rendering stays on llvmpipe through Mesa's kms_swrast GBM (dumb buffers).
+set -u
+cd "$HOME"
+export XDG_RUNTIME_DIR=/run/user/1000
+export LANG=C.UTF-8 LC_ALL=C.UTF-8
+export LIBSEAT_BACKEND=seatd SEATD_VTBOUND=0
+export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe LP_NUM_THREADS=4
+export GBM_ALWAYS_SOFTWARE=1
+export QT_QUICK_BACKEND=software QSG_RENDER_LOOP=basic
+export XDG_DATA_DIRS=/opt/omarchy-android/hyprland/share:/usr/local/share:/usr/share
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Hyprland XDG_SESSION_DESKTOP=Hyprland
+mkdir -p "$HOME/.local/state/vegas"
+unset WAYLAND_DISPLAY
+export PATH=/opt/omarchy-android/hyprland/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export LD_LIBRARY_PATH=/opt/omarchy-android/aquamarine/lib
+# Mali (kbase Panfrost) renders straight into the KMS scanout buffers when
+# native-init prepared the GPU this boot; otherwise llvmpipe as before.
+if [[ -f /run/vegas-gpu-ready && -c /dev/mali0 ]]; then
+  unset LIBGL_ALWAYS_SOFTWARE GALLIUM_DRIVER GBM_ALWAYS_SOFTWARE
+  export LD_LIBRARY_PATH=/opt/omarchy-android/aquamarine/lib:/opt/vegas-gpu/mesa-kbase/lib
+  export LIBGL_DRIVERS_PATH=/opt/vegas-gpu/mesa-kbase/lib/dri
+  export HYPRLAND_EGL_SURFACELESS=1
+  gpu_mode=mali
+fi
+export AQ_DRM_DEVICES=/dev/dri/card0 AQ_NO_MODIFIERS=1
+export HYPRLAND_EGL_NO_MODIFIERS=1
+export HYPRLAND_ANDROID_DMABUF=0 HYPRLAND_GL_DMABUF_EXPORT=0
+export HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 HYPRLAND_NO_RT=1
+export QT_QPA_PLATFORM=wayland GDK_BACKEND=wayland SDL_VIDEODRIVER=wayland
+export NO_AT_BRIDGE=1 QT_ACCESSIBILITY=0 GTK_A11Y=none
+export OMARCHY_PATH=/usr/share/omarchy OMARCHY_GPU_MODE=${gpu_mode:-software}
+export OMARCHY_OUTPUT_WIDTH=1080 OMARCHY_OUTPUT_HEIGHT=2388 OMARCHY_REFRESH_MHZ=120000 OMARCHY_SCALE=1.5
+export OMARCHY_PROOT=1 XWAYLAND_NO_GLAMOR=1 WVKBD_IMMEDIATE_DRAW=1
+export VEGAS_NATIVE_TOUCH=1 VEGAS_DIRECT_DRM=1
+# Optional per-boot experiment overrides (e.g. GALLIVM_PERF, LP_NUM_THREADS).
+[[ -f $HOME/.config/vegas/drm-debug.env ]] && source "$HOME/.config/vegas/drm-debug.env"
+dbus-run-session --config-file="$HOME/.config/omarchy/proot-session-bus.conf" \
+  /opt/omarchy-android/hyprland/bin/Hyprland --config "$HOME/.config/hypr/hyprland.lua"

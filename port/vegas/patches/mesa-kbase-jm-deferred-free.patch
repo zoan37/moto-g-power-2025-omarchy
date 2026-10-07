@@ -1,0 +1,125 @@
+diff --git i/src/panfrost/base/pan_base.h w/src/panfrost/base/pan_base.h
+index 0b735f3..e126335 100644
+--- i/src/panfrost/base/pan_base.h
++++ w/src/panfrost/base/pan_base.h
+@@ -134,6 +134,11 @@ struct kbase_ {
+         struct util_dynarray gem_handles;
+         struct util_dynarray atom_bos[256];
+         uint64_t job_seq;
++        /* JM only: submit sequence of each in-flight atom, and BO frees
++         * deferred until every atom submitted before them has completed.
++         * CSF tracks this per queue in event_slots instead. */
++        uint64_t jm_atom_seq[256];
++        struct kbase_sync_link *jm_deferred;
+ 
+         void (*close)(kbase k);
+ 
+diff --git i/src/panfrost/base/pan_vX_base.c w/src/panfrost/base/pan_vX_base.c
+index 4c9c273..0890d67 100644
+--- i/src/panfrost/base/pan_vX_base.c
++++ w/src/panfrost/base/pan_vX_base.c
+@@ -930,6 +934,53 @@ kbase_poll_event(kbase k, int64_t timeout_ns)
+ }
+ 
+ #if PAN_BASE_API < 2
++/* Oldest submit sequence still executing, or UINT64_MAX when idle.
++ * Caller holds handle_lock. */
++static uint64_t
++kbase_jm_oldest_inflight(kbase k)
++{
++        uint64_t oldest = UINT64_MAX;
++
++        for (unsigned i = 0; i < ARRAY_SIZE(k->atom_bos); ++i)
++                if (k->atom_bos[i].data)
++                        oldest = MIN2(oldest, k->jm_atom_seq[i]);
++
++        return oldest;
++}
++
++/* Run deferred BO frees whose jobs have all completed. Callbacks run with no
++ * kbase lock held, since they take Panfrost's BO locks. */
++static void
++kbase_jm_run_deferred(kbase k)
++{
++        struct kbase_sync_link *ready = NULL;
++
++        pthread_mutex_lock(&k->queue_lock);
++        pthread_mutex_lock(&k->handle_lock);
++        uint64_t oldest = kbase_jm_oldest_inflight(k);
++        pthread_mutex_unlock(&k->handle_lock);
++
++        struct kbase_sync_link **p = &k->jm_deferred;
++        while (*p) {
++                struct kbase_sync_link *link = *p;
++                if (link->seqnum <= oldest) {
++                        *p = link->next;
++                        link->next = ready;
++                        ready = link;
++                } else {
++                        p = &link->next;
++                }
++        }
++        pthread_mutex_unlock(&k->queue_lock);
++
++        while (ready) {
++                struct kbase_sync_link *next = ready->next;
++                ready->callback(ready->data);
++                free(ready);
++                ready = next;
++        }
++}
++
+ static bool
+ kbase_handle_events(kbase k)
+ {
+@@ -941,6 +992,7 @@ kbase_handle_events(kbase k)
+ 
+                 if (ret == -1) {
+                         if (errno == EAGAIN) {
++                                kbase_jm_run_deferred(k);
+                                 return true;
+                         } else {
+                                 perror("read(mali fd)");
+@@ -1220,6 +1276,7 @@ kbase_submit(kbase k, uint64_t va, unsigned req,
+         /* Make sure that we haven't taken an atom that's already in use. */
+         assert(!k->atom_bos[nr].data);
+         k->atom_bos[atom.atom_number] = buf;
++        k->jm_atom_seq[nr] = atom.udata.blob[0];
+ 
+         unsigned handle_buf_size = util_dynarray_num_elements(&k->gem_handles, kbase_handle);
+         kbase_handle *handle_buf = util_dynarray_begin(&k->gem_handles);
+@@ -1748,6 +1827,34 @@ static bool
+ kbase_callback_all_queues(kbase k, int32_t *count,
+                           void (*callback)(void *), void *data)
+ {
++#if PAN_BASE_API < 2
++        /* JM has no CSF queues, so event_slot_usage is always zero here and
++         * the loop below would report "idle". Freeing then unmaps (or the BO
++         * cache recycles) memory that in-flight atoms still read, giving
++         * JOB_READ_FAULT and corrupted frames. Defer until every atom
++         * submitted so far has completed. */
++        pthread_mutex_lock(&k->queue_lock);
++        pthread_mutex_lock(&k->handle_lock);
++        bool busy = kbase_jm_oldest_inflight(k) != UINT64_MAX;
++        uint64_t barrier = k->job_seq;
++        pthread_mutex_unlock(&k->handle_lock);
++
++        if (busy) {
++                struct kbase_sync_link *link = malloc(sizeof(*link));
++                *link = (struct kbase_sync_link) {
++                        .next = k->jm_deferred,
++                        .seqnum = barrier,
++                        .callback = callback,
++                        .data = data,
++                };
++                k->jm_deferred = link;
++                p_atomic_add(count, 1);
++        }
++
++        pthread_mutex_unlock(&k->queue_lock);
++        return busy;
++#endif
++
+         pthread_mutex_lock(&k->queue_lock);
+ 
+         int32_t queue_count = 0;

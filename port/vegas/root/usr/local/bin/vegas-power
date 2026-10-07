@@ -1,0 +1,36 @@
+#!/bin/bash
+case ${1:-} in reboot|poweroff|fastboot) ;; *) exit 2 ;; esac
+runtime=${XDG_RUNTIME_DIR:-/run/user/1000}
+if [[ $1 == poweroff ]]; then
+  source /usr/local/libexec/vegas/power-source-state
+  # This wait runs as the desktop user; it never holds the root transition
+  # lock or prevents the independent temperature guard entering fastboot.
+  exec 9>"$runtime/vegas-shutdown-wait.lock" || exit 1
+  flock -n 9 || { printf 'A shutdown request is already waiting.\n'; exit 1; }
+  printf 'Power off\n\nUnplug USB and any charger to shut down.\n'
+  printf 'Waiting up to 90 seconds. Close this window or press Ctrl+C to cancel.\n\n'
+  deadline=$((SECONDS + 90))
+  stable=0
+  while (( SECONDS < deadline )); do
+    state=$(vegas_external_power_state)
+    case $state in
+      disconnected) ((stable += 1)); (( stable >= 3 )) && break ;;
+      connected) stable=0 ;;
+      unknown)
+        printf 'Cannot read external power state. Shutdown cancelled.\n'
+        printf 'Use vegas-power fastboot, unplug USB, then select Power off.\n'
+        exit 1 ;;
+    esac
+    sleep 1
+  done
+  if (( stable < 3 )); then
+    printf 'USB or charger is still connected. Shutdown cancelled.\n'
+    exit 1
+  fi
+  printf 'External power disconnected. Requesting shutdown…\n'
+fi
+# Rename a complete request: the supervisor must never see a partial write.
+temporary=$(mktemp "$runtime/vegas-power-request.XXXXXX") || exit 1
+trap 'rm -f "$temporary"' EXIT
+printf '%s\n' "$1" >"$temporary" || exit 1
+mv -f -- "$temporary" "$runtime/vegas-power-request"

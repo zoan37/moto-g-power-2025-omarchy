@@ -1,0 +1,13 @@
+#!/bin/sh
+printf 'Content-Type: text/plain\r\n\r\n'
+. /bin/card-guard
+guard_card "$QUERY_STRING"
+mount_card
+gzip -dc /card-files.sha256.gz >/mnt/arch/.provision/files.sha256
+chroot /mnt/arch /.provision/busybox sha256sum -c /.provision/files.sha256 >/run/card-file-check.log 2>&1 || { tail -n 12 /run/card-file-check.log; fail 'installed file integrity failure'; }
+echo CARD_FILES_VERIFIED
+chroot /mnt/arch /bin/bash -lc 'echo ARCH_NATIVE_SHELL; uname -m; cat /etc/os-release; /usr/bin/pacman --version; /usr/lib/systemd/systemd --version' || fail 'Arch userspace probe failed'
+sync
+umount /mnt/arch || fail 'unmount before filesystem check failed'
+/bin/e2fsck -fn /dev/mmcblk0p1 2>&1 || fail 'filesystem check failed'
+echo CARD_VERIFIED

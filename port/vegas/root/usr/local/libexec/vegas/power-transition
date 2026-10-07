@@ -1,0 +1,45 @@
+#!/bin/bash
+# Run outside PID 1's wait loop; direct RESTART2 is verified on this phone.
+case ${1:-} in reboot|poweroff|fastboot) action=$1;; *) exit 2;; esac
+helper=/usr/local/libexec/vegas
+# Recheck immediately before the syscall, including requests from root CGI.
+# This candidate is pending a cable-disconnected hardware power-off test.
+if [[ $action == poweroff ]]; then
+  source "$helper/power-source-state"
+  if [[ $(vegas_external_power_state) != disconnected ]]; then
+    echo 'Power off rejected: external power present or unreadable' >>/var/log/vegas/power.log
+    exit 1
+  fi
+fi
+mkdir /run/vegas-power-in-progress 2>/dev/null || exit 75
+trap 'rmdir /run/vegas-power-in-progress 2>/dev/null || true' EXIT
+exec >>/var/log/vegas/power.log 2>&1
+echo "Native power transition: $action ($(date -Is))"
+# Keep pre-syscall evidence for the next boot without changing charging settings.
+umask 077
+mkdir -p /var/log/vegas/power
+{
+  printf 'ACTION:%s\n' "$action"
+  printf 'BOOT_ID:'; cat /proc/sys/kernel/random/boot_id
+  printf 'UPTIME:'; cat /proc/uptime
+  for supply in /sys/class/power_supply/*; do
+    [[ -d $supply ]] || continue
+    printf 'SUPPLY:%s\n' "${supply##*/}"
+    for field in type online status voltage_now; do
+      [[ -r $supply/$field ]] || continue
+      printf '%s:' "$field"; cat "$supply/$field"
+    done
+  done
+} >/var/log/vegas/power/last-request.log
+# A deliberate reboot/poweroff is not a GPU boot-loop strike.
+rm -f /var/lib/vegas/gpu-boot-pending
+# Avoid compositor/device teardown before the stock reboot notifier runs.
+# The direct sync + RESTART2 path is verified from the active desktop.
+sync
+case "$action" in
+  # Successful kernel transitions never return. Keeping this shell alive
+  # lets its EXIT trap release the lock if a helper fails or is missing.
+  reboot) "$helper/busybox" reboot -f ;;
+  poweroff) "$helper/busybox" poweroff -f ;;
+  fastboot) "$helper/to-bootloader" ;;
+esac

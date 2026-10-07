@@ -1,0 +1,44 @@
+#!/bin/sh
+printf 'Content-Type: text/plain\r\n\r\n'
+. /bin/card-guard
+[ "$REQUEST_METHOD" = POST ] || fail 'POST required'
+set -f
+oldifs=$IFS
+IFS=:
+set -- $QUERY_STRING
+IFS=$oldifs
+[ "$#" -eq 2 ] || fail 'bad parameters'
+guard_card "$1"
+case "$2" in ''|*[!0-9a-f]*) fail 'invalid checksum' ;; esac
+[ "${#2}" -eq 64 ] || fail 'invalid checksum length'
+case "$CONTENT_LENGTH" in ''|*[!0-9]*) fail 'invalid length' ;; esac
+[ "$CONTENT_LENGTH" -gt 0 ] && [ "$CONTENT_LENGTH" -le 268435456 ] || fail 'length exceeds bound'
+packed=$(mktemp /tmp/card-chunk.XXXXXX) || fail 'temporary file failed'
+trap 'rm -f "$packed"' EXIT
+head -c "$CONTENT_LENGTH" >"$packed"
+[ "$(wc -c <"$packed")" -eq "$CONTENT_LENGTH" ] || fail 'incomplete transfer'
+[ "$(sha256sum "$packed" | cut -d ' ' -f 1)" = "$2" ] || fail 'transfer checksum mismatch'
+mount_card
+target=/mnt/arch
+case "$CARD_DESKTOP" in
+    1)
+        target=/mnt/arch/omarchy
+        mkdir -p "$target/.provision"
+        cp /bin/busybox "$target/.provision/busybox"
+        ;;
+esac
+# BusyBox --overwrite handles regular data but not existing symlinks on retry.
+# Remove only listed non-directory destinations, inside the selected chroot.
+tar -tzf "$packed" >/run/card-chunk-paths || fail 'archive listing failed'
+chroot "$target" /.provision/busybox sh -c '
+    while IFS= read -r name; do
+        case "$name" in /*|../*|*/../*|*/..) exit 1 ;; esac
+        if [ -L "$name" ] || [ -f "$name" ]; then
+            /.provision/busybox rm -f -- "$name" || exit 1
+        fi
+    done
+' </run/card-chunk-paths || fail 'resumed archive cleanup failed'
+# Extract inside the card's chroot: absolute links cannot reach the ramdisk.
+chroot "$target" /.provision/busybox tar -xzpf - --overwrite --numeric-owner <"$packed" 2>&1 || fail 'archive extraction failed'
+sync
+echo "CARD_CHUNK_OK:$2"

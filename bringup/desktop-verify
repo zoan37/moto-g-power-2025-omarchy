@@ -1,0 +1,36 @@
+#!/bin/sh
+printf 'Content-Type: text/plain\r\n\r\n'
+. /bin/card-guard
+[ "$REQUEST_METHOD" = POST ] || fail 'POST required'
+set -f
+oldifs=$IFS
+IFS=:
+set -- $QUERY_STRING
+IFS=$oldifs
+[ "$#" -eq 2 ] || fail 'bad parameters'
+guard_card "$1"
+case "$2" in ''|*[!0-9a-f]*) fail 'invalid manifest checksum' ;; esac
+[ "${#2}" -eq 64 ] || fail 'invalid checksum length'
+case "$CONTENT_LENGTH" in ''|*[!0-9]*) fail 'invalid manifest length' ;; esac
+[ "$CONTENT_LENGTH" -gt 0 ] && [ "$CONTENT_LENGTH" -le 8388608 ] || fail 'manifest too large'
+head -c "$CONTENT_LENGTH" >/run/desktop-files.sha256.gz
+[ "$(wc -c </run/desktop-files.sha256.gz)" = "$CONTENT_LENGTH" ] || fail 'short manifest upload'
+[ "$(sha256sum /run/desktop-files.sha256.gz | cut -d ' ' -f 1)" = "$2" ] || fail 'manifest checksum mismatch'
+mount_card
+gzip -dc /run/desktop-files.sha256.gz >/mnt/arch/omarchy/.provision/files.sha256
+chroot /mnt/arch/omarchy /.provision/busybox sha256sum -c /.provision/files.sha256 >/run/desktop-file-check.log 2>&1 || {
+    tail -n 12 /run/desktop-file-check.log; fail 'desktop file integrity failure';
+}
+chroot /mnt/arch/omarchy /bin/bash -c '
+    set -e
+    echo ARCH_DESKTOP_USERSPACE
+    export XDG_RUNTIME_DIR=/tmp/vegas-version-check
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 0700 "$XDG_RUNTIME_DIR"
+    trap '\''rm -rf "$XDG_RUNTIME_DIR"'\'' EXIT
+    /usr/bin/weston --version
+    LD_LIBRARY_PATH=/opt/omarchy-android/aquamarine/lib /opt/omarchy-android/hyprland/bin/Hyprland --version
+    /usr/bin/quickshell --version
+' || fail 'desktop executable check failed'
+sync
+echo CARD_VERIFIED

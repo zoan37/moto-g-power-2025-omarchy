@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "vegas.keyboard",
+  "name": "Phone keyboard",
+  "version": "1.0.0",
+  "description": "Show or hide the phone's on-screen keyboard",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "Keyboard.qml"},
+  "barWidget": {"displayName": "Phone keyboard", "defaultSection": "left", "allowMultiple": false}
+}

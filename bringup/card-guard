@@ -1,0 +1,16 @@
+#!/bin/sh
+# Sourced by card-only CGI scripts. Never accept a target path from the host.
+export PATH=/bin
+fail() { echo "CARD_ERROR:$*"; exit 1; }
+guard_card() {
+    case "$1" in ''|*[!0-9a-f]*) fail 'invalid card identity' ;; esac
+    [ "${#1}" -eq 32 ] || fail 'invalid card identity length'
+    [ "$(cat /sys/class/block/mmcblk0/device/type)" = SD ] || fail 'not an SD card'
+    [ "$(cat /sys/class/block/mmcblk0/device/cid)" = "$1" ] || fail 'card identity changed'
+    [ "$(blockdev --getsize64 /dev/mmcblk0)" = 32010928128 ] || fail 'card capacity changed'
+}
+mount_card() {
+    blkid /dev/mmcblk0p1 | grep -q 'LABEL="vegas-arch"' || fail 'Arch card label missing'
+    mkdir -p /mnt/arch
+    grep -q '^/dev/mmcblk0p1 /mnt/arch ' /proc/mounts || mount -t ext4 /dev/mmcblk0p1 /mnt/arch || fail 'mount failed'
+}

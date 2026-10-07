@@ -1,0 +1,5 @@
+capstone==5.0.9
+customtkinter==5.2.2
+darkdetect==0.8.0
+packaging==26.3
+pyasn1==0.6.4

@@ -1,0 +1,30 @@
+#!/bin/bash
+# Read-only: charger ONLINE, not battery STATUS, tells us whether VBUS is present.
+# mtk-master-charger reports type Unknown, but its ONLINE is is_charger_exist().
+vegas_external_power_state() {
+  local root=${1:-/sys/class/power_supply} supply type online seen=0 uncertain=0
+  for supply in "$root"/*; do
+    [[ -d $supply ]] || continue
+    type=$(cat "$supply/type" 2>/dev/null) || type=
+    case "${supply##*/}:$type" in
+      mtk-master-charger:*|*:Mains|*:USB*|*:Wireless) ;;
+      *) continue ;;
+    esac
+    online=$(cat "$supply/online" 2>/dev/null) || online=
+    case $online in
+      1) printf 'connected\n'; return ;;
+      0) seen=1 ;;
+      *) uncertain=1 ;;
+    esac
+  done
+  if (( seen && ! uncertain )); then
+    printf 'disconnected\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  [[ $# == 0 ]] || { printf 'Usage: power-source-state\n' >&2; exit 2; }
+  vegas_external_power_state
+fi

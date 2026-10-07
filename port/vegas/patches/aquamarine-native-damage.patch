@@ -1,0 +1,1160 @@
+--- a/src/backend/Wayland.cpp
++++ b/src/backend/Wayland.cpp
+@@ -4,9 +4,12 @@
+ #include <xdg-shell.hpp>
+ #include "Shared.hpp"
+ #include "FormatUtils.hpp"
++#include <chrono>
++#include <cstdlib>
+ #include <cstring>
+ #include <xf86drm.h>
+ #include <gbm.h>
++#include <GL/gl.h>
+ #include <fcntl.h>
+ #include <sys/mman.h>
+ #include <unistd.h>
+@@ -15,6 +18,19 @@
+ using namespace Hyprutils::Memory;
+ using namespace Hyprutils::Math;
+ #define SP CSharedPointer
++
++static uint32_t nestedRefreshRate() {
++    const auto value = getenv("AQ_WAYLAND_REFRESH_MHZ");
++    if (!value)
++        return 60000;
++
++    char* end = nullptr;
++    errno     = 0;
++    const auto parsed = std::strtoul(value, &end, 10);
++    if (errno || end == value || *end != '\0' || parsed < 30000 || parsed > 240000)
++        return 60000;
++    return parsed;
++}
+ 
+ static std::pair<int, std::string> openExclusiveShm() {
+     // Only absolute paths can be shared across different shm_open() calls
+@@ -116,23 +132,27 @@
+         const std::string NAME = name;
+ 
+         if (NAME == "wl_seat") {
+-            TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 9, id)));
+-            waylandState.seat = makeShared<CCWlSeat>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_seat_interface, 9));
++            const auto bindVersion = std::min(version, 9U);
++            TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, bindVersion, id)));
++            waylandState.seat = makeShared<CCWlSeat>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_seat_interface, bindVersion));
+             initSeat();
+         } else if (NAME == "xdg_wm_base") {
+-            TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 6, id)));
+-            waylandState.xdg = makeShared<CCXdgWmBase>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &xdg_wm_base_interface, 6));
++            const auto bindVersion = std::min(version, 6U);
++            TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, bindVersion, id)));
++            waylandState.xdg = makeShared<CCXdgWmBase>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &xdg_wm_base_interface, bindVersion));
+             initShell();
+         } else if (NAME == "wl_compositor") {
+-            TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 6, id)));
+-            waylandState.compositor = makeShared<CCWlCompositor>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_compositor_interface, 6));
++            const auto bindVersion = std::min(version, 6U);
++            TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, bindVersion, id)));
++            waylandState.compositor = makeShared<CCWlCompositor>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_compositor_interface, bindVersion));
+         } else if (NAME == "wl_shm") {
+             TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 1, id)));
+             waylandState.shm = makeShared<CCWlShm>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_shm_interface, 1));
+         } else if (NAME == "zwp_linux_dmabuf_v1") {
+-            TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 4, id)));
+-            waylandState.dmabuf =
+-                makeShared<CCZwpLinuxDmabufV1>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &zwp_linux_dmabuf_v1_interface, 4));
++            const auto bindVersion = std::min(version, 4U);
++            TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, bindVersion, id)));
++            waylandState.dmabuf = makeShared<CCZwpLinuxDmabufV1>(
++                (wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &zwp_linux_dmabuf_v1_interface, bindVersion));
+             if (!initDmabuf()) {
+                 backend->log(AQ_LOG_ERROR, "Wayland backend cannot start: zwp_linux_dmabuf_v1 init failed");
+                 waylandState.dmabufFailed = true;
+@@ -143,7 +163,7 @@
+ 
+     wl_display_roundtrip(waylandState.display);
+ 
+-    if (!waylandState.xdg || !waylandState.compositor || !waylandState.seat || !waylandState.dmabuf || waylandState.dmabufFailed || !waylandState.shm) {
++    if (!waylandState.xdg || !waylandState.compositor || !waylandState.seat || !waylandState.shm) {
+         backend->log(AQ_LOG_ERROR, "Wayland backend cannot start: Missing protocols");
+         return false;
+     }
+@@ -275,25 +295,7 @@
+ 
+     backend->backend->log(AQ_LOG_DEBUG, "New wayland pointer wl_pointer");
+ 
+-    pointer->setMotion([this](CCWlPointer* r, uint32_t serial, wl_fixed_t x, wl_fixed_t y) {
+-        const auto STATE = backend->focusedOutput->state->state();
+-
+-        if (!backend->focusedOutput || (!STATE.mode && !STATE.customMode))
+-            return;
+-
+-        const Vector2D size = STATE.customMode ? STATE.customMode->pixelSize : STATE.mode->pixelSize;
+-
+-        Vector2D       local = {wl_fixed_to_double(x), wl_fixed_to_double(y)};
+-        local                = local / size;
+-
+-        timespec now;
+-        clock_gettime(CLOCK_MONOTONIC, &now);
+-
+-        events.warp.emit(SWarpEvent{
+-            .timeMs   = (uint32_t)(now.tv_sec * 1000 + now.tv_nsec / 1000000),
+-            .absolute = local,
+-        });
+-    });
++    pointer->setMotion([this](CCWlPointer* r, uint32_t timeMs, wl_fixed_t x, wl_fixed_t y) { emitWarp(timeMs, x, y); });
+ 
+     pointer->setEnter([this](CCWlPointer* r, uint32_t serial, wl_proxy* surface, wl_fixed_t x, wl_fixed_t y) {
+         backend->lastEnterSerial = serial;
+@@ -305,6 +307,7 @@
+             backend->focusedOutput = o;
+             backend->backend->log(AQ_LOG_DEBUG, std::format("[wayland] focus changed: {}", o->name));
+             o->onEnter(pointer, serial);
++            emitWarp(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(), x, y);
+             break;
+         }
+     });
+@@ -315,6 +318,9 @@
+                 continue;
+ 
+             o->cursorState.serial = 0;
++            if (backend->focusedOutput.lock() == o)
++                backend->focusedOutput = {};
++            break;
+         }
+     });
+ 
+@@ -337,6 +343,18 @@
+     pointer->setFrame([this](CCWlPointer* r) { events.frame.emit(); });
+ }
+ 
++void Aquamarine::CWaylandPointer::emitWarp(uint32_t timeMs, wl_fixed_t x, wl_fixed_t y) {
++    const auto output = backend->focusedOutput.lock();
++    if (!output || output->waylandState.surfaceSize.x <= 0 || output->waylandState.surfaceSize.y <= 0)
++        return;
++
++    events.warp.emit(SWarpEvent{
++        .timeMs   = timeMs,
++        .absolute = Vector2D{wl_fixed_to_double(x), wl_fixed_to_double(y)} / output->waylandState.surfaceSize,
++        .output   = SP<IOutput>(output),
++    });
++}
++
+ Aquamarine::CWaylandPointer::~CWaylandPointer() {
+     ;
+ }
+@@ -369,6 +387,32 @@
+ }
+ 
+ bool Aquamarine::CWaylandBackend::initDmabuf() {
++    // linux-dmabuf v3 predates feedback objects but still advertises formats
++    // and modifiers directly on the global. Weston-on-Termux:X11 exposes v3.
++    if (waylandState.dmabuf->version() < 4) {
++        auto addFormat = [this](uint32_t format, uint64_t modifier) {
++            auto it = std::ranges::find_if(dmabufFormats, [format](const auto& candidate) { return candidate.drmFormat == format; });
++            if (it == dmabufFormats.end()) {
++                dmabufFormats.emplace_back(SDRMFormat{.drmFormat = format, .modifiers = {modifier}});
++                return;
++            }
++            if (std::ranges::find(it->modifiers, modifier) == it->modifiers.end())
++                it->modifiers.emplace_back(modifier);
++        };
++
++        waylandState.dmabuf->setFormat([this, addFormat](CCZwpLinuxDmabufV1* r, uint32_t format) {
++            addFormat(format, DRM_FORMAT_MOD_INVALID);
++        });
++        waylandState.dmabuf->setModifier(
++            [this, addFormat](CCZwpLinuxDmabufV1* r, uint32_t format, uint32_t modifierHi, uint32_t modifierLo) {
++                addFormat(format, (static_cast<uint64_t>(modifierHi) << 32U) | modifierLo);
++            });
++
++        wl_display_roundtrip(waylandState.display);
++        backend->log(AQ_LOG_DEBUG, std::format("zwp_linux_dmabuf_v1: legacy v{} advertised {} formats", waylandState.dmabuf->version(), dmabufFormats.size()));
++        return !dmabufFormats.empty();
++    }
++
+     waylandState.dmabufFeedback = makeShared<CCZwpLinuxDmabufFeedbackV1>(waylandState.dmabuf->sendGetDefaultFeedback());
+     if (!waylandState.dmabufFeedback) {
+         backend->log(AQ_LOG_ERROR, "initDmabuf: failed to get default feedback");
+@@ -470,11 +514,43 @@
+ }
+ 
+ std::vector<SDRMFormat> Aquamarine::CWaylandBackend::getRenderFormats() {
+-    return dmabufFormats;
++    if (!dmabufFormats.empty() && backend->primaryAllocator &&
++        (backend->primaryAllocator->type() == AQ_ALLOCATOR_TYPE_DMA_HEAP || backend->primaryAllocator->type() == AQ_ALLOCATOR_TYPE_VULKAN)) {
++        std::vector<SDRMFormat> linearFormats;
++        for (const auto& format : dmabufFormats) {
++            if (format.drmFormat != DRM_FORMAT_XRGB8888 && format.drmFormat != DRM_FORMAT_ARGB8888)
++                continue;
++            if (std::ranges::find(format.modifiers, DRM_FORMAT_MOD_LINEAR) != format.modifiers.end())
++                linearFormats.emplace_back(SDRMFormat{.drmFormat = format.drmFormat, .modifiers = {DRM_FORMAT_MOD_LINEAR}});
++        }
++        return linearFormats;
++    }
++    if (!dmabufFormats.empty() && backend->primaryAllocator && backend->primaryAllocator->type() != AQ_ALLOCATOR_TYPE_SHM)
++        return dmabufFormats;
++    return {SDRMFormat{.drmFormat = DRM_FORMAT_XRGB8888, .modifiers = {DRM_FORMAT_INVALID}},
++            SDRMFormat{.drmFormat = DRM_FORMAT_ARGB8888, .modifiers = {DRM_FORMAT_INVALID}}};
++}
++
++bool Aquamarine::CWaylandBackend::supportsLinearDmabuf() const {
++    if (!waylandState.dmabuf || waylandState.dmabufFailed)
++        return false;
++
++    return std::ranges::any_of(dmabufFormats, [](const auto& format) {
++        if (format.drmFormat != DRM_FORMAT_XRGB8888 && format.drmFormat != DRM_FORMAT_ARGB8888)
++            return false;
++        return std::ranges::find(format.modifiers, DRM_FORMAT_MOD_LINEAR) != format.modifiers.end();
++    });
++}
++
++bool Aquamarine::CWaylandBackend::supportsDmabuf(uint32_t format, uint64_t modifier) const {
++    const auto found = std::ranges::find_if(dmabufFormats, [format](const auto& candidate) { return candidate.drmFormat == format; });
++    if (found == dmabufFormats.end())
++        return false;
++    return std::ranges::find(found->modifiers, modifier) != found->modifiers.end();
+ }
+ 
+ std::vector<SDRMFormat> Aquamarine::CWaylandBackend::getCursorFormats() {
+-    return dmabufFormats;
++    return getRenderFormats();
+ }
+ 
+ SP<IAllocator> Aquamarine::CWaylandBackend::preferredAllocator() {
+@@ -492,8 +568,15 @@
+ Aquamarine::CWaylandOutput::CWaylandOutput(const std::string& name_, Hyprutils::Memory::CWeakPointer<CWaylandBackend> backend_) : backend(backend_) {
+     name = name_;
+ 
++    // xdg-shell does not advertise output modes. Publish the Android target
++    // cadence explicitly so the nested compositor does not assume 60 Hz.
++    modes.emplace_back(SP<SOutputMode>(new SOutputMode(Vector2D{1280, 720}, nestedRefreshRate(), true)));
++
+     // The scheduler's frameReady signal drives the public events.frame on this output.
+     frameReadyListener = sched.frameReady.listen([this]() { events.frame.emit(); });
++
++    // a scheduleFrame mid frame, reschedule one more.
++    rescheduleListener = sched.rescheduleNeeded.listen([this]() { scheduleFrame(AQ_SCHEDULE_NEEDS_FRAME); });
+ 
+     // Idle that emits the scheduled frame, fired via the core backend's idle queue
+     // (addIdleEvent), which the consumer's event loop pumps every iteration. Deliberately
+@@ -524,6 +607,23 @@
+     waylandState.xdgSurface->setConfigure([this](CCXdgSurface* r, uint32_t serial) {
+         backend->backend->log(AQ_LOG_DEBUG, std::format("Output {}: configure surface with {}", name, serial));
+         r->sendAckConfigure(serial);
++        waylandState.configured = true;
++
++        // This callback can run before the backend's queued newOutput event.
++        // Defer publishing the configured size until the idle callbacks run:
++        // newOutput is already first in that queue, so Hyprland has installed
++        // its monitor listeners by the time it receives this state event.
++        const auto configureSize = waylandState.pendingConfigureSize;
++        backend->idleCallbacks.emplace_back([this, configureSize]() {
++            if (configureSize != Vector2D{})
++                events.state.emit(SStateEvent{.size = configureSize});
++
++            if (state->state().committed && !commit())
++                backend->backend->log(AQ_LOG_ERROR, std::format("Output {}: failed to replay state after configure", name));
++
++            needsFrame = true;
++            sched.frameReady.emit();
++        });
+     });
+ 
+     waylandState.xdgToplevel = makeShared<CCXdgToplevel>(waylandState.xdgSurface->sendGetToplevel());
+@@ -543,12 +643,10 @@
+             w = 1280;
+             h = 720;
+         }
+-        events.state.emit(SStateEvent{.size = {w, h}});
+-        // Kick off the first frame synchronously: the consumer expects events.frame in
+-        // the same dispatch cycle as the toplevel configure. Deferring via scheduleFrame's
+-        // idle races the first commit and can leave the output blank until the next event.
+-        needsFrame = true;
+-        sched.frameReady.emit();
++        modes.front()->pixelSize = {w, h};
++        // The matching xdg_surface.configure carries the serial that must be
++        // acknowledged before the compositor is allowed to submit a buffer.
++        waylandState.pendingConfigureSize = {w, h};
+     });
+ 
+     waylandState.xdgToplevel->setClose([this](CCXdgToplevel* r) { destroy(); });
+@@ -562,6 +660,11 @@
+     waylandState.surface->sendSetInputRegion(inputRegion.get());
+     waylandState.surface->sendAttach(nullptr, 0, 0);
+     waylandState.surface->sendCommit();
++    // createOutput() runs after the startup roundtrips. Flush this initial
++    // xdg commit immediately or an otherwise idle parent has nothing to read,
++    // never replies with configure, and Hyprland remains on its headless
++    // fallback output.
++    wl_display_flush(backend->waylandState.display);
+ 
+     inputRegion->sendDestroy();
+ 
+@@ -596,6 +699,9 @@
+ }
+ 
+ bool Aquamarine::CWaylandOutput::destroy() {
++    if (backend->focusedOutput.lock() == self.lock())
++        backend->focusedOutput = {};
++
+     events.destroy.emit();
+     waylandState.surface->sendAttach(nullptr, 0, 0);
+     waylandState.surface->sendCommit();
+@@ -610,6 +716,11 @@
+ }
+ 
+ bool Aquamarine::CWaylandOutput::commit() {
++    if (!waylandState.configured) {
++        backend->backend->log(AQ_LOG_WARNING, std::format("Output {}: deferring buffer commit until the initial xdg configure", name));
++        return true;
++    }
++
+     Vector2D pixelSize = {};
+ 
+     if (state->internalState.customMode)
+@@ -657,13 +768,45 @@
+         return false;
+     }
+ 
+-    if (wlBuffer->pendingRelease)
+-        backend->backend->log(AQ_LOG_WARNING, std::format("Output {}: pending state has a non-released buffer??", name));
++    if (wlBuffer->pendingRelease) {
++        backend->backend->log(AQ_LOG_ERROR, std::format("Output {}: refusing to reuse a non-released buffer", name));
++        needsFrame = true;
++        return false;
++    }
+ 
+     wlBuffer->pendingRelease = true;
++    state->internalState.buffer->lock();
++    state->internalState.buffer->lockedByBackend = true;
++
++    // KGSL does not publish DRM implicit-sync fences for a DMA heap import in
++    // every driver path. This diagnostic/compatibility switch establishes the
++    // synchronization boundary before the parent compositor samples it. Once
++    // validated, this can be replaced by a native fence hand-off.
++    if (state->internalState.buffer->type() == BUFFER_TYPE_DMABUF && envEnabled("AQ_ANDROID_DMABUF_GLFINISH"))
++        glFinish();
+ 
+     waylandState.surface->sendAttach(wlBuffer->waylandState.buffer.get(), 0, 0);
+-    waylandState.surface->sendDamageBuffer(0, 0, INT32_MAX, INT32_MAX);
++    // Native software-rendered phones cannot afford a full Pixman scanout
++    // repaint for every cursor/key or idle frame. Forward buffer-coordinate
++    // damage already supplied by Hyprland, including its buffer-age repair.
++    // New/resized surfaces and callers without damage retain the full fallback.
++    if (envEnabled("AQ_WAYLAND_DAMAGE") &&
++        (state->internalState.committed & COutputState::AQ_OUTPUT_STATE_DAMAGE) &&
++        waylandState.surfaceSize == state->internalState.buffer->size) {
++        const auto size = state->internalState.buffer->size;
++        const auto damage = state->internalState.damage.copy().intersect(0, 0, size.x, size.y);
++        bool changed = false;
++        for (const auto& rect : damage.getRects()) {
++            waylandState.surface->sendDamageBuffer(rect.x1, rect.y1, rect.x2 - rect.x1, rect.y2 - rect.y1);
++            changed = true;
++        }
++        // Keep continuous frame callbacks alive on the stock Weston parent
++        // without repainting its entire physical framebuffer while idle.
++        if (!changed)
++            waylandState.surface->sendDamageBuffer(0, 0, 1, 1);
++    } else {
++        waylandState.surface->sendDamageBuffer(0, 0, INT32_MAX, INT32_MAX);
++    }
+ 
+     // Register the next wl_surface.frame callback as part of this commit's pending state,
+     // but only if one isn't already pending. A consumer that commits twice in quick
+@@ -681,6 +824,7 @@
+     }
+ 
+     waylandState.surface->sendCommit();
++    waylandState.surfaceSize = state->internalState.buffer->size;
+ 
+     // Flush immediately: commit() runs from the consumer's render path, outside
+     // dispatchEvents() (which flushes only at its top). Without this the buffer commit and
+@@ -702,9 +846,18 @@
+ SP<CWaylandBuffer> Aquamarine::CWaylandOutput::wlBufferFromBuffer(SP<IBuffer> buffer) {
+     std::erase_if(backendState.buffers, [this](const auto& el) { return el.first.expired() || !swapchain->contains(el.first.lock()); });
+ 
+-    for (auto const& [k, v] : backendState.buffers) {
++    for (auto it = backendState.buffers.begin(); it != backendState.buffers.end(); ++it) {
++        const auto& [k, v] = *it;
+         if (k != buffer)
+             continue;
++
++        const auto presentation = buffer->presentationDMABUF();
++        const bool wantsPresentation = presentation.success && backend->waylandState.dmabuf &&
++            backend->supportsDmabuf(presentation.format, presentation.modifier);
++        if (wantsPresentation != v->usesPresentationDMABUF() && !v->pendingRelease) {
++            backendState.buffers.erase(it);
++            break;
++        }
+ 
+         return v;
+     }
+@@ -840,6 +993,12 @@
+                                 std::format("CWaylandOutput::scheduleFrame: reason {}, needsFrame {}, canSchedule {}", (uint32_t)reason, needsFrame, sched.canSchedule())));
+     needsFrame = true;
+ 
++    // scheduled from inside a running frame, schedule it once the running frame is done.
++    if (sched.frameRunning()) {
++        sched.requestReschedule();
++        return;
++    }
++
+     if (!sched.canSchedule())
+         return;
+ 
+@@ -848,6 +1007,60 @@
+ }
+ 
+ Aquamarine::CWaylandBuffer::CWaylandBuffer(SP<IBuffer> buffer_, Hyprutils::Memory::CWeakPointer<CWaylandBackend> backend_) : buffer(buffer_), backend(backend_) {
++    const auto presentation = buffer->presentationDMABUF();
++    if (presentation.success && backend->waylandState.dmabuf && backend->supportsDmabuf(presentation.format, presentation.modifier)) {
++        auto params = makeShared<CCZwpLinuxBufferParamsV1>(backend->waylandState.dmabuf->sendCreateParams());
++        if (params) {
++            for (int i = 0; i < presentation.planes; ++i)
++                params->sendAdd(presentation.fds.at(i), i, presentation.offsets.at(i), presentation.strides.at(i), presentation.modifier >> 32,
++                                presentation.modifier & 0xFFFFFFFF);
++
++            waylandState.buffer = makeShared<CCWlBuffer>(
++                params->sendCreateImmed(presentation.size.x, presentation.size.y, presentation.format, (zwpLinuxBufferParamsV1Flags)0));
++            params->sendDestroy();
++
++            if (waylandState.buffer) {
++                presentationDMABUF = true;
++                buffer->setPresentationDMABUFActive(true);
++                backend->backend->log(AQ_LOG_DEBUG, std::format("WaylandBuffer: presenting GPU DMA-BUF format 0x{:08x}, modifier 0x{:016x}",
++                                                                presentation.format, presentation.modifier));
++                waylandState.buffer->setRelease([this](CCWlBuffer* r) {
++                    pendingRelease = false;
++                    if (const auto aqBuffer = buffer.lock(); aqBuffer && aqBuffer->lockedByBackend) {
++                        aqBuffer->lockedByBackend = false;
++                        aqBuffer->unlock();
++                    }
++                });
++                return;
++            }
++        }
++        backend->backend->log(AQ_LOG_WARNING, "WaylandBuffer: GPU presentation override failed, falling back to SHM");
++    }
++
++    const auto shm = buffer->shm();
++    if (shm.success) {
++        const int poolSize = shm.offset + static_cast<int64_t>(shm.stride) * static_cast<int64_t>(shm.size.y);
++        auto      pool     = makeShared<CCWlShmPool>(backend->waylandState.shm->sendCreatePool(shm.fd, poolSize));
++        if (!pool) {
++            backend->backend->log(AQ_LOG_ERROR, "WaylandBuffer: failed to create SHM pool");
++            return;
++        }
++
++        waylandState.buffer = makeShared<CCWlBuffer>(
++            pool->sendCreateBuffer(shm.offset, shm.size.x, shm.size.y, shm.stride, shmFormatFromDRM(shm.format)));
++        pool.reset();
++
++        if (waylandState.buffer)
++            waylandState.buffer->setRelease([this](CCWlBuffer* r) {
++                pendingRelease = false;
++                if (const auto aqBuffer = buffer.lock(); aqBuffer && aqBuffer->lockedByBackend) {
++                    aqBuffer->lockedByBackend = false;
++                    aqBuffer->unlock();
++                }
++            });
++        return;
++    }
++
+     auto params = makeShared<CCZwpLinuxBufferParamsV1>(backend->waylandState.dmabuf->sendCreateParams());
+ 
+     if (!params) {
+@@ -863,12 +1076,22 @@
+ 
+     waylandState.buffer = makeShared<CCWlBuffer>(params->sendCreateImmed(attrs.size.x, attrs.size.y, attrs.format, (zwpLinuxBufferParamsV1Flags)0));
+ 
+-    waylandState.buffer->setRelease([this](CCWlBuffer* r) { pendingRelease = false; });
++    waylandState.buffer->setRelease([this](CCWlBuffer* r) {
++        pendingRelease = false;
++        if (const auto aqBuffer = buffer.lock(); aqBuffer && aqBuffer->lockedByBackend) {
++            aqBuffer->lockedByBackend = false;
++            aqBuffer->unlock();
++        }
++    });
+ 
+     params->sendDestroy();
+ }
+ 
+ Aquamarine::CWaylandBuffer::~CWaylandBuffer() {
++    if (presentationDMABUF) {
++        if (const auto aqBuffer = buffer.lock())
++            aqBuffer->setPresentationDMABUFActive(false);
++    }
+     if (waylandState.buffer && waylandState.buffer->resource())
+         waylandState.buffer->sendDestroy();
+ }
+@@ -876,3 +1099,7 @@
+ bool Aquamarine::CWaylandBuffer::good() {
+     return waylandState.buffer && waylandState.buffer->resource();
+ }
++
++bool Aquamarine::CWaylandBuffer::usesPresentationDMABUF() const {
++    return presentationDMABUF;
++}
+--- a/src/backend/drm/DRM.cpp
++++ b/src/backend/drm/DRM.cpp
+@@ -14,9 +14,9 @@
+ #include <deque>
+ #include <unordered_map>
+ #include <cstring>
++#include <cmath>
+ #include <filesystem>
+ #include <system_error>
+-#include <unordered_set>
+ #include <sys/mman.h>
+ #include <fcntl.h>
+ #include <unistd.h>
+@@ -36,6 +36,7 @@
+ #include "Shared.hpp"
+ #include "hwdata.hpp"
+ #include "Renderer.hpp"
++#include "OutputTiming.hpp"
+ 
+ #include <hyprutils/utils/ScopeGuard.hpp>
+ using Hyprutils::Utils::CScopeGuard;
+@@ -410,7 +411,7 @@
+     for (auto const& c : connectors) {
+         if (c->sched.frameInFlight() || c->sched.frameRunning()) {
+             backend->log(AQ_LOG_DEBUG, std::format("drm: Clearing stale page-flip state for {}", c->szName));
+-            c->sched.invalidate();
++            c->invalidateFrame();
+         }
+     }
+ 
+@@ -479,6 +480,8 @@
+ 
+         if (c->crtc->pendingCursor)
+             data.cursorFB = c->crtc->pendingCursor;
++        else if (c->crtc->cursor)
++            data.cursorFB = c->crtc->cursor->front; // a consumed pending cursor lives on the plane
+ 
+         if (data.cursorFB && (data.cursorFB->dead || data.cursorFB->buffer->dmabuf().modifier == DRM_FORMAT_MOD_INVALID))
+             data.cursorFB = nullptr;
+@@ -666,7 +669,10 @@
+         return false;
+     }
+ 
+-    rendererState.renderer = CDRMRenderer::attempt(backend.lock(), gpu->renderNodeFd >= 0 ? gpu->renderNodeFd : gpu->fd);
++    // virtio/virgl may expose a valid GBM device without advertising an
++    // EGL_DRM_DEVICE_FILE_EXT string. Use the allocator-backed GBM platform
++    // so the renderer is tied directly to the DRM fd in that case.
++    rendererState.renderer = CDRMRenderer::attempt(backend.lock(), newAllocator);
+ 
+     if (!rendererState.renderer) {
+         backend->log(AQ_LOG_ERROR, "drm: initMgpu: no renderer");
+@@ -760,7 +766,7 @@
+         // disabled outputs release their CRTCs so active outputs get priority
+         if (c->crtc && c->status == DRM_MODE_CONNECTED && c->output && !c->output->enabledState) {
+             backend->log(AQ_LOG_DEBUG, std::format("drm: {} is disabled, releasing crtc {}", c->szName, c->crtc->id));
+-            c->crtc.reset();
++            c->setCRTC(nullptr);
+         }
+ 
+         if (c->crtc && c->status == DRM_MODE_CONNECTED) {
+@@ -812,7 +818,7 @@
+ 
+             backend->log(AQ_LOG_DEBUG,
+                          std::format("drm: connected slot {} crtc {} assigned to {}{}", i, crtc->id, c->szName, c->crtc ? std::format(" (old {})", c->crtc->id) : ""));
+-            c->crtc  = crtc;
++            c->setCRTC(crtc);
+             assigned = true;
+             changed.emplace_back(c);
+             std::erase(recheck, c);
+@@ -842,7 +848,7 @@
+                 continue;
+ 
+             backend->log(AQ_LOG_DEBUG, std::format("drm: backup slot {} crtc {} assigned to disabled {}", i, crtcs.at(i)->id, c->szName));
+-            c->crtc = crtcs.at(i);
++            c->setCRTC(crtcs.at(i));
+             std::erase(recheck, c);
+             break;
+         }
+@@ -854,7 +860,7 @@
+ 
+         if (c->crtc)
+             backend->log(AQ_LOG_DEBUG, std::format("drm: {} is not connected, clearing stale crtc {}", c->szName, c->crtc->id));
+-        c->crtc.reset();
++        c->setCRTC(nullptr);
+     }
+ 
+     // tell the user to re-assign a valid mode etc, if needed
+@@ -1156,50 +1162,104 @@
+     return driver;
+ }
+ 
+-static void handlePF(int fd, unsigned seq, unsigned tv_sec, unsigned tv_usec, unsigned crtc_id, void* data) {
+-    auto pageFlip = (SDRMPageFlip*)data;
+-
+-    if (!pageFlip || !pageFlip->connector)
++uintptr_t Aquamarine::CDRMBackend::nextPageFlipID() {
++    return ++m_lastPageFlipID;
++}
++
++SP<SDRMCRTC> Aquamarine::CDRMBackend::crtcByID(uint32_t id) {
++    auto it = std::find_if(crtcs.begin(), crtcs.end(), [id](const auto& c) { return c->id == id; });
++    return it == crtcs.end() ? nullptr : *it;
++}
++
++uintptr_t Aquamarine::SDRMCRTC::armPageFlip(CWeakPointer<SDRMConnector> connector, bool async) {
++    if (pendingFlip.id && !(pendingFlip.connector == connector)) {
++        if (const auto PREV = pendingFlip.connector.lock()) {
++            backend->log(AQ_LOG_ERROR, std::format("drm: crtc {} page-flip slot taken from {}, dropping its frame", id, PREV->szName));
++            PREV->invalidateFrame();
++        }
++    }
++
++    pendingFlip.id        = backend->nextPageFlipID();
++    pendingFlip.connector = connector;
++    pendingFlip.async     = async;
++
++    return pendingFlip.id.value();
++}
++
++void Aquamarine::SDRMCRTC::disarmPageFlip() {
++    pendingFlip.id.reset();
++    pendingFlip.connector.reset();
++    pendingFlip.async = false;
++}
++
++static CWeakPointer<CDRMBackend> gDispatchingBackend;
++static void                      handlePF(int fd, unsigned seq, unsigned tv_sec, unsigned tv_usec, unsigned crtc_id, void* data) {
++    const auto BACKEND = gDispatchingBackend.lock();
++
++    if (!BACKEND || BACKEND->drmFD() != fd)
+         return;
+ 
+-    pageFlip->connector->sched.onFrameComplete();
+-
+-    const auto& BACKEND = pageFlip->connector->backend;
++    const auto FLIPID = rc<uintptr_t>(data);
++    const auto CRTC   = BACKEND->crtcByID(crtc_id);
++
++    if (!CRTC || !FLIPID || CRTC->pendingFlip.id != FLIPID) {
++        BACKEND->log(AQ_LOG_DEBUG, std::format("drm: Ignoring a stale pf event, flip {} on crtc {}", FLIPID, crtc_id));
++        return;
++    }
++
++    const auto CONNECTOR = CRTC->pendingFlip.connector.lock();
++    const auto ASYNC     = CRTC->pendingFlip.async;
++    CRTC->disarmPageFlip();
++
++    if (!CONNECTOR) {
++        BACKEND->log(AQ_LOG_DEBUG, "drm: Ignoring a pf event whose connector is gone");
++        return;
++    }
+ 
+     TRACE(BACKEND->log(AQ_LOG_TRACE, std::format("drm: pf event seq {} sec {} usec {} crtc {}", seq, tv_sec, tv_usec, crtc_id)));
+ 
+-    if (pageFlip->connector->status != DRM_MODE_CONNECTED || !pageFlip->connector->crtc || !pageFlip->connector->output) {
++    if (!CONNECTOR->sched.frameInFlight()) {
++        BACKEND->log(AQ_LOG_DEBUG, std::format("drm: Ignoring pf event on {}, no frame in flight?", CONNECTOR->szName));
++        return;
++    }
++
++    CONNECTOR->sched.onFrameComplete();
++
++    if (CONNECTOR->status != DRM_MODE_CONNECTED || !CONNECTOR->crtc || !CONNECTOR->output) {
+         BACKEND->log(AQ_LOG_DEBUG, "drm: Ignoring a pf event from a disabled crtc / connector");
+         return;
+     }
+ 
+     // hold isFrameRunning around the emit (RAII pair, so reentrant enable/disable
+     // can't strand it).
+-    CFrameRunningGuard frameRunning(pageFlip->connector->sched);
+-
+-    pageFlip->connector->onPresent();
+-
+-    uint32_t flags = IOutput::AQ_OUTPUT_PRESENT_VSYNC | IOutput::AQ_OUTPUT_PRESENT_HW_CLOCK | IOutput::AQ_OUTPUT_PRESENT_HW_COMPLETION | IOutput::AQ_OUTPUT_PRESENT_ZEROCOPY;
+-
+-    timespec presented = {.tv_sec = (time_t)tv_sec, .tv_nsec = (long)(tv_usec * 1000)};
+-
+-    // nvidia-drm registers no vblank counter, unless module options 'nvidia_drm vblank=1' is set.
+-    // kernel checks for vblank support and fallbacks to setting seq 0 and the timestamp is a plain ktime_get()
+-    // this is not a HW clock, its just a plain software clock fetched from whenever the event was called.
+-    if (BACKEND->gpuDriver() == AQ_BACKEND_GPU_DRIVER_NVIDIA && seq == 0)
+-        flags &= ~IOutput::AQ_OUTPUT_PRESENT_HW_CLOCK;
+-
+-    pageFlip->connector->output->events.present.emit(IOutput::SPresentEvent{
+-        .presented = BACKEND->sessionActive(),
+-        .when      = &presented,
+-        .seq       = seq,
+-        .refresh   = (int)(pageFlip->connector->refresh ? (1000000000000LL / pageFlip->connector->refresh) : 0),
+-        .flags     = flags,
+-    });
++    CFrameRunningGuard frameRunning(CONNECTOR->sched);
++
++    // a tearing commit already emitted present and rotated the FBs synchronously
++    if (!ASYNC) {
++        CONNECTOR->onPresent();
++
++        uint32_t flags = IOutput::AQ_OUTPUT_PRESENT_VSYNC | IOutput::AQ_OUTPUT_PRESENT_HW_CLOCK | IOutput::AQ_OUTPUT_PRESENT_HW_COMPLETION | IOutput::AQ_OUTPUT_PRESENT_ZEROCOPY;
++
++        timespec presented = {.tv_sec = (time_t)tv_sec, .tv_nsec = (long)(tv_usec * 1000)};
++
++        // nvidia-drm registers no vblank counter, unless module options 'nvidia_drm vblank=1' is set.
++        // kernel checks for vblank support and fallbacks to setting seq 0 and the timestamp is a plain ktime_get()
++        // this is not a HW clock, its just a plain software clock fetched from whenever the event was called.
++        if (BACKEND->gpuDriver() == AQ_BACKEND_GPU_DRIVER_NVIDIA && seq == 0)
++            flags &= ~IOutput::AQ_OUTPUT_PRESENT_HW_CLOCK;
++
++        CONNECTOR->output->events.present.emit(IOutput::SPresentEvent{
++            .presented = BACKEND->sessionActive(),
++            .when      = &presented,
++            .seq       = seq,
++            .refresh   = (int)(CONNECTOR->refresh ? (1000000000000LL / CONNECTOR->refresh) : 0),
++            .flags     = flags,
++        });
++    }
+ 
+     // Skip if an idle frame is already queued: it emits events.frame itself, and #325 forbids double-firing.
+-    if (BACKEND->sessionActive() && pageFlip->connector->output->enabledState && !pageFlip->connector->sched.frameScheduled())
+-        pageFlip->connector->sched.frameReady.emit();
++    if (BACKEND->sessionActive() && CONNECTOR->output->enabledState && !CONNECTOR->sched.frameScheduled())
++        CONNECTOR->sched.frameReady.emit();
+ }
+ 
+ bool Aquamarine::CDRMBackend::dispatchEvents() {
+@@ -1207,6 +1267,11 @@
+         .version            = 3,
+         .page_flip_handler2 = ::handlePF,
+     };
++
++    // drmHandleEvent -> handlePF can dispatch another gpus fd so gDispatchingBackend is the wrong backend.
++    const auto  PREVIOUS = gDispatchingBackend;
++    CScopeGuard dispatchGuard([&PREVIOUS] { gDispatchingBackend = PREVIOUS; });
++    gDispatchingBackend = self;
+ 
+     if (drmHandleEvent(gpu->fd, &event) != 0)
+         backend->log(AQ_LOG_ERROR, std::format("drm: Failed to handle event on fd {}", gpu->fd));
+@@ -1234,7 +1299,7 @@
+         if (!a)
+             backend->log(AQ_LOG_ERROR, "drm: onReady: no renderer for gl formats");
+         else {
+-            auto r = CDRMRenderer::attempt(backend.lock(), gpu->renderNodeFd >= 0 ? gpu->renderNodeFd : gpu->fd);
++            auto r = CDRMRenderer::attempt(backend.lock(), a);
+             if (!r)
+                 backend->log(AQ_LOG_ERROR, "drm: onReady: no renderer for gl formats");
+             else {
+@@ -1457,8 +1522,6 @@
+ }
+ 
+ bool Aquamarine::SDRMConnector::init(drmModeConnector* connector) {
+-    pendingPageFlip.connector = self.lock();
+-
+     if (!getDRMConnectorProps(backend->gpu->fd, id, &props))
+         return false;
+     if (props.values.Colorspace)
+@@ -1475,7 +1538,7 @@
+     if (!possibleCrtcs)
+         backend->backend->log(AQ_LOG_ERROR, "drm: No CRTCs possible");
+ 
+-    crtc = getCurrentCRTC(connector);
++    setCRTC(getCurrentCRTC(connector));
+ 
+     return true;
+ }
+@@ -1513,20 +1576,19 @@
+     free(blobData);
+ }
+ 
++void Aquamarine::SDRMConnector::releaseFBBuffer(const SP<CDRMFB> fb) {
++    if (!fb)
++        return;
++
++    if (auto buf = fb->buffer.lock(); buf && buf->lockedByBackend) {
++        buf->lockedByBackend = false;
++        buf->events.backendRelease.emit();
++    }
++}
++
+ void Aquamarine::SDRMConnector::releaseFBReferences() {
+-    std::unordered_set<IBuffer*> releasedBuffers;
+-
+-    const auto                   releaseFB = [&releasedBuffers](SP<CDRMFB>& fb) {
+-        if (!fb) {
+-            fb.reset();
+-            return;
+-        }
+-
+-        if (auto buf = fb->buffer.lock(); buf && buf->lockedByBackend && releasedBuffers.emplace(buf.get()).second) {
+-            buf->lockedByBackend = false;
+-            buf->events.backendRelease.emit();
+-        }
+-
++    const auto releaseFB = [this](SP<CDRMFB>& fb) {
++        releaseFBBuffer(fb);
+         fb.reset();
+     };
+ 
+@@ -1545,8 +1607,6 @@
+ 
+         releaseFB(crtc->pendingCursor);
+     }
+-
+-    releaseFB(pendingCursorFB);
+ }
+ 
+ Aquamarine::SDRMConnector::~SDRMConnector() {
+@@ -1640,39 +1700,21 @@
+                                                 parsed.chromaticityCoords->blue.y, parsed.chromaticityCoords->white.y, parsed.chromaticityCoords->white.y)));
+     }
+ 
+-    auto exts = di_edid_get_extensions(edid);
+-
+-    for (; *exts != nullptr; exts++) {
+-        auto tag = di_edid_ext_get_tag(*exts);
+-        TRACE(backend->backend->log(AQ_LOG_TRACE, std::format("EDID: checking ext {}", (uint32_t)tag)));
+-        if (tag == DI_EDID_EXT_DISPLAYID)
+-            backend->backend->log(AQ_LOG_WARNING, "FIXME: support displayid blocks");
+-
+-        const auto cta = di_edid_ext_get_cta(*exts);
+-        if (cta) {
+-            TRACE(backend->backend->log(AQ_LOG_TRACE, "EDID: found CTA"));
+-            const di_cta_hdr_static_metadata_block* hdr_static_metadata = nullptr;
+-            const di_cta_colorimetry_block*         colorimetry         = nullptr;
+-            auto                                    blocks              = di_edid_cta_get_data_blocks(cta);
+-            for (; *blocks != nullptr; blocks++) {
+-                if (!hdr_static_metadata && (hdr_static_metadata = di_cta_data_block_get_hdr_static_metadata(*blocks))) {
+-                    TRACE(backend->backend->log(AQ_LOG_TRACE, std::format("EDID: found HDR {}", hdr_static_metadata->eotfs->pq)));
+-                    parsed.hdrMetadata = IOutput::SHDRMetadata{
+-                        .desiredContentMaxLuminance      = hdr_static_metadata->desired_content_max_luminance,
+-                        .desiredMaxFrameAverageLuminance = hdr_static_metadata->desired_content_max_frame_avg_luminance,
+-                        .desiredContentMinLuminance      = hdr_static_metadata->desired_content_min_luminance,
+-                        .supportsPQ                      = hdr_static_metadata->eotfs->pq,
+-                    };
+-                    continue;
+-                }
+-                if (!colorimetry && (colorimetry = di_cta_data_block_get_colorimetry(*blocks))) {
+-                    TRACE(backend->backend->log(AQ_LOG_TRACE, std::format("EDID: found colorimetry {}", colorimetry->bt2020_rgb)));
+-                    parsed.supportsBT2020 = colorimetry->bt2020_rgb;
+-                    continue;
+-                }
+-            }
+-            break;
+-        }
++    const auto* hdr_static_metadata = di_info_get_hdr_static_metadata(info);
++    if (hdr_static_metadata && (hdr_static_metadata->pq || hdr_static_metadata->hlg)) {
++        TRACE(backend->backend->log(AQ_LOG_TRACE, std::format("EDID: found HDR pq={} hlg={}", hdr_static_metadata->pq, hdr_static_metadata->hlg)));
++        parsed.hdrMetadata = IOutput::SHDRMetadata{
++            .desiredContentMaxLuminance      = hdr_static_metadata->desired_content_max_luminance,
++            .desiredMaxFrameAverageLuminance = hdr_static_metadata->desired_content_max_frame_avg_luminance,
++            .desiredContentMinLuminance      = hdr_static_metadata->desired_content_min_luminance,
++            .supportsPQ                      = hdr_static_metadata->pq,
++        };
++    }
++
++    const auto* ssc = di_info_get_supported_signal_colorimetry(info);
++    if (ssc) {
++        TRACE(backend->backend->log(AQ_LOG_TRACE, std::format("EDID: found colorimetry bt2020_rgb={}", ssc->bt2020_rgb)));
++        parsed.supportsBT2020 = ssc->bt2020_rgb;
+     }
+ 
+     di_info_destroy(info);
+@@ -1713,6 +1755,9 @@
+         backend->backend->log(AQ_LOG_DEBUG, std::format("drm: Not connecting connector {} because it's already connected", szName));
+         return;
+     }
++
++    // max_bpc-less retry is per-sink and must not persist across hotplugs.
++    maxBpcFailed = false;
+ 
+     backend->backend->log(AQ_LOG_DEBUG, std::format("drm: Connecting connector {}, {}", szName, crtc ? std::format("CRTC ID {}", crtc->id) : "no CRTC"));
+ 
+@@ -1834,6 +1879,8 @@
+         return;
+     }
+ 
++    invalidateFrame();
++
+     status = DRM_MODE_DISCONNECTED;
+     releaseFBReferences();
+ 
+@@ -1846,23 +1893,33 @@
+ 
+     if (ok && !data.test)
+         applyCommit(data);
+-    else
+-        rollbackCommit(data);
+ 
+     return ok;
+ }
+ 
+ void Aquamarine::SDRMConnector::applyCommit(const SDRMConnectorCommitData& data) {
+-    crtc->primary->back = data.mainFB;
+-    if (crtc->cursor && data.cursorFB)
+-        crtc->cursor->back = data.cursorFB;
+-
+-    if (data.mainFB)
++    const bool enable = data.enabled && data.mainFB;
++
++    if (enable && data.mainFB != crtc->primary->front) {
++        if (crtc->primary->back != crtc->primary->front && crtc->primary->back != data.mainFB)
++            releaseFBBuffer(crtc->primary->back);
++
++        crtc->primary->back                  = data.mainFB;
+         data.mainFB->buffer->lockedByBackend = true;
+-    if (crtc->cursor && data.cursorFB)
+-        data.cursorFB->buffer->lockedByBackend = true;
+-
+-    pendingCursorFB.reset();
++    }
++
++    if (enable && crtc->cursor && data.cursorFB) {
++        if (data.cursorFB != crtc->cursor->front) {
++            if (crtc->cursor->back != crtc->cursor->front && crtc->cursor->back != data.cursorFB)
++                releaseFBBuffer(crtc->cursor->back);
++
++            crtc->cursor->back                     = data.cursorFB;
++            data.cursorFB->buffer->lockedByBackend = true;
++        }
++
++        if (crtc->pendingCursor == data.cursorFB)
++            crtc->pendingCursor.reset();
++    }
+ 
+     if (data.committed & COutputState::AQ_OUTPUT_STATE_MODE)
+         refresh = calculateRefresh(data.modeInfo);
+@@ -1872,7 +1929,7 @@
+ 
+     if (!output->enabledState) {
+         releaseFBReferences();
+-        sched.invalidate();
++        invalidateFrame();
+     }
+ 
+     if (!backend->updateSecondaryRendererState())
+@@ -1892,27 +1949,33 @@
+     }
+ }
+ 
+-void Aquamarine::SDRMConnector::rollbackCommit(const SDRMConnectorCommitData& data) {
+-    // cursors are applied regardless,
+-    // unless this was a test
+-    if (data.test)
++void Aquamarine::SDRMConnector::invalidateFrame() {
++    sched.invalidate();
++
++    if (crtc && crtc->pendingFlip.connector == self)
++        crtc->disarmPageFlip();
++}
++
++void Aquamarine::SDRMConnector::setCRTC(SP<SDRMCRTC> newCRTC) {
++    if (crtc == newCRTC)
+         return;
+ 
+-    if (crtc->cursor && data.cursorFB)
+-        crtc->cursor->back = data.cursorFB;
+-
+-    crtc->pendingCursor.reset();
++    invalidateFrame();
++
++    crtc = newCRTC;
+ }
+ 
+ void Aquamarine::SDRMConnector::onPresent() {
+-    crtc->primary->last  = crtc->primary->front;
+-    crtc->primary->front = crtc->primary->back;
+-    if (crtc->primary->last && crtc->primary->last->buffer) {
+-        crtc->primary->last->buffer->lockedByBackend = false;
+-        crtc->primary->last->buffer->events.backendRelease.emit();
+-    }
+-
+-    if (crtc->cursor) {
++    if (crtc->primary->back && crtc->primary->back != crtc->primary->front) {
++        crtc->primary->last  = crtc->primary->front;
++        crtc->primary->front = crtc->primary->back;
++        if (crtc->primary->last && crtc->primary->last->buffer) {
++            crtc->primary->last->buffer->lockedByBackend = false;
++            crtc->primary->last->buffer->events.backendRelease.emit();
++        }
++    }
++
++    if (crtc->cursor && crtc->cursor->back && crtc->cursor->back != crtc->cursor->front) {
+         crtc->cursor->last  = crtc->cursor->front;
+         crtc->cursor->front = crtc->cursor->back;
+         if (crtc->cursor->last && crtc->cursor->last->buffer) {
+@@ -2017,10 +2080,7 @@
+ 
+     // If we are changing the rendering format, we may need to reconfigure the output (aka modeset)
+     // which may result in some glitches
+-    const bool NEEDS_RECONFIG = COMMITTED &
+-        (COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_ENABLED | COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_FORMAT |
+-         COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_MODE | COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_HDR |
+-         COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_WCG);
++    const bool NEEDS_RECONFIG = state->needsReconfig();
+ 
+     const bool BLOCKING = NEEDS_RECONFIG || !(COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_BUFFER);
+ 
+@@ -2041,10 +2101,11 @@
+         }
+ 
+         if (STATE.enabled && NEEDS_RECONFIG && connector->sched.frameInFlight()) {
+-            // ALLOW_MODESET resets the CRTC and cancels the in-flight flip; no
+-            // completion event will arrive, so clear the userspace state.
++            // ALLOW_MODESET resets the CRTC, so the in-flight flip is either cancelled or
++            // superseded by this commit. drop it either way; whatever event still arrives no
++            // longer matches the crtcs id and is discarded.
+             backend->backend->log(AQ_LOG_DEBUG, std::format("drm: page-flip on {} cancelled by modeset, clearing flip state", name));
+-            connector->sched.invalidate();
++            connector->invalidateFrame();
+         }
+ 
+         if (STATE.enabled && (COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_BUFFER) && connector->sched.frameInFlight()) {
+@@ -2064,12 +2125,22 @@
+ 
+     SDRMConnectorCommitData data;
+ 
++    // A commit that carries no new buffer has nothing to blit: STATE.buffer is the one we already copied
++    SP<CDRMFB> blittedFB;
++    if (backend->shouldBlit() && !(COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_BUFFER)) {
++        const auto& LAST = connector->crtc->primary->back ? connector->crtc->primary->back : connector->crtc->primary->front;
++        if (LAST && !LAST->dead)
++            blittedFB = LAST;
++    }
++
+     if (STATE.buffer && STATE.enabled) {
+         TRACE(backend->backend->log(AQ_LOG_TRACE, "drm: Committed a buffer, updating state"));
+ 
+         SP<CDRMFB> drmFB;
+ 
+-        if (backend->shouldBlit()) {
++        if (blittedFB)
++            drmFB = blittedFB;
++        else if (backend->shouldBlit()) {
+             if (!backend->rendererState.renderer) {
+                 backend->backend->log(AQ_LOG_DEBUG, "drm: No renderer attached to backend when required for blitting, initializing");
+                 if (!backend->initMgpu() || !backend->rendererState.renderer || !backend->rendererState.allocator) {
+@@ -2093,12 +2164,19 @@
+             OPTIONS.multigpu = false; // this is not a shared swapchain, and additionally, don't make it linear, nvidia would be mad
+             OPTIONS.cursor   = false;
+             OPTIONS.scanout  = true;
++            if (OPTIONS.length == 0) // releaseMgpuResources() cleared the swapchain and we committed without updating it.
++                OPTIONS.length = 2;
+             if (!mgpu.swapchain->reconfigure(OPTIONS)) {
+                 backend->backend->log(AQ_LOG_ERROR, "drm: Backend requires blit, but the mgpu swapchain failed reconfiguring");
+                 return false;
+             }
+ 
+-            auto                         NEWAQBUF = mgpu.swapchain->next(nullptr);
++            auto NEWAQBUF = mgpu.swapchain->next(nullptr);
++            if (!NEWAQBUF) {
++                backend->backend->log(AQ_LOG_ERROR, "drm: Backend requires blit, but the mgpu swapchain has no buffer");
++                return false;
++            }
++
+             SP<Aquamarine::CDRMRenderer> primaryRenderer;
+             if (backend->primary)
+                 primaryRenderer = backend->primary->rendererState.renderer;
+@@ -2267,6 +2345,10 @@
+     if (!connector->crtc)
+         return false;
+ 
++    // already hidden
++    if (!buffer && !cursorVisible)
++        return true;
++
+     state->internalState.committed |= COutputState::AQ_OUTPUT_STATE_CURSOR_SHAPE;
+     if (!buffer)
+         setCursorVisible(false);
+@@ -2319,7 +2401,12 @@
+                 return false;
+             }
+ 
+-            auto                         NEWAQBUF = mgpu.cursorSwapchain->next(nullptr);
++            auto NEWAQBUF = mgpu.cursorSwapchain->next(nullptr);
++            if (!NEWAQBUF) {
++                backend->backend->log(AQ_LOG_ERROR, "drm: Backend requires blit, but the mgpu cursorSwapchain has no buffer");
++                return false;
++            }
++
+             SP<Aquamarine::CDRMRenderer> primaryRenderer;
+             if (backend->primary)
+                 primaryRenderer = backend->primary->rendererState.renderer;
+@@ -2365,7 +2452,16 @@
+                                             connector->sched.frameInFlight(), connector->sched.frameScheduled())));
+     needsFrame = true;
+ 
+-    if (!connector->sched.canSchedule() || !enabledState)
++    if (!enabledState)
++        return;
++
++    // a scheduleFrame mid frame, reschedule one more.
++    if (connector->sched.frameRunning()) {
++        connector->sched.requestReschedule();
++        return;
++    }
++
++    if (!connector->sched.canSchedule())
+         return;
+ 
+     connector->sched.setFrameScheduled(true);
+@@ -2397,6 +2493,54 @@
+     return backend->drmProps.cursorSize;
+ }
+ 
++bool Aquamarine::CDRMOutput::hasCursorPlane() const {
++    return connector->status == DRM_MODE_CONNECTED && connector->crtc && connector->crtc->cursor && !connector->crtc->cursor->formats.empty();
++}
++
++std::optional<std::chrono::steady_clock::time_point> Aquamarine::CDRMOutput::nextVBlank() const {
++    const auto BACKEND = backend.lock();
++    if (!BACKEND || !BACKEND->sessionActive() || connector->status != DRM_MODE_CONNECTED || !connector->crtc || !enabledState || connector->refresh <= 0 ||
++        (lease && lease->active))
++        return std::nullopt;
++
++    const auto& STATE = state->state();
++
++    if (state->needsReconfig() || (STATE.committed & (COutputState::AQ_OUTPUT_STATE_ADAPTIVE_SYNC | COutputState::AQ_OUTPUT_STATE_PRESENTATION_MODE)) || !STATE.enabled ||
++        STATE.adaptiveSync || STATE.presentationMode != AQ_OUTPUT_PRESENTATION_VSYNC)
++        return std::nullopt;
++
++    const auto REFRESH_PERIOD = std::chrono::nanoseconds{1'000'000'000'000LL / connector->refresh};
++
++    for (size_t attempt = 0; attempt < 2; ++attempt) {
++        uint64_t sequence = 0, lastVblankNs = 0;
++        if (drmCrtcGetSequence(BACKEND->drmFD(), connector->crtc->id, &sequence, &lastVblankNs))
++            return std::nullopt;
++
++        if (BACKEND->gpuDriver() == AQ_BACKEND_GPU_DRIVER_NVIDIA && sequence == 0)
++            return std::nullopt;
++
++        const auto STEADY_BEFORE = std::chrono::steady_clock::now();
++        timespec   monotonicNow  = {};
++        if (clock_gettime(CLOCK_MONOTONIC, &monotonicNow))
++            return std::nullopt;
++        const auto STEADY_AFTER = std::chrono::steady_clock::now();
++
++        if (lastVblankNs > sc<uint64_t>(std::chrono::nanoseconds::max().count()))
++            return std::nullopt;
++
++        const auto MONOTONIC_NOW = std::chrono::seconds{monotonicNow.tv_sec} + std::chrono::nanoseconds{monotonicNow.tv_nsec};
++        const auto NEXT          = OutputTiming::predictNextVBlank(std::chrono::nanoseconds{lastVblankNs}, MONOTONIC_NOW, REFRESH_PERIOD);
++        if (!NEXT)
++            continue;
++
++        const auto RESULT = OutputTiming::toSteadyClock(*NEXT, MONOTONIC_NOW, STEADY_BEFORE, STEADY_AFTER);
++        if (RESULT)
++            return RESULT;
++    }
++
++    return std::nullopt;
++}
++
+ size_t Aquamarine::CDRMOutput::getGammaSize() {
+     if (!backend->atomic) {
+         backend->log(AQ_LOG_ERROR, "No support for gamma on the legacy iface");
+@@ -2463,6 +2607,9 @@
+ 
+     // The scheduler's frameReady signal drives the public events.frame on this output.
+     frameReadyListener = connector->sched.frameReady.listen([this]() { events.frame.emit(); });
++
++    // scheduled from inside a running frame, schedule it once the running frame is done.
++    rescheduleListener = connector->sched.rescheduleNeeded.listen([this]() { scheduleFrame(AQ_SCHEDULE_NEEDS_FRAME); });
+ }
+ 
+ SP<CDRMFB> Aquamarine::CDRMFB::create(SP<IBuffer> buffer_, Hyprutils::Memory::CWeakPointer<CDRMBackend> backend_, bool* isNew) {

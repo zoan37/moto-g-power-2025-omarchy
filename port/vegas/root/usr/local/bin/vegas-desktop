@@ -1,0 +1,62 @@
+#!/bin/bash
+set -u
+cd "$HOME"
+# One-boot direct-DRM trial (no nested Weston); the flag is consumed first so a
+# failed trial falls back to this proven path on the next boot.
+if [[ -f $HOME/.config/vegas/drm-once ]]; then
+  rm -f "$HOME/.config/vegas/drm-once"
+  exec /usr/local/bin/vegas-desktop-drm
+fi
+# With the Mali prepared this boot, Hyprland drives the panel itself: the GPU
+# renders straight into the KMS buffers at 120 Hz, no Weston copy. Create
+# ~/.config/vegas/nested to keep the Weston path instead.
+if [[ -f /run/vegas-gpu-ready && -c /dev/mali0 && ! -f $HOME/.config/vegas/nested ]]; then
+  exec /usr/local/bin/vegas-desktop-drm
+fi
+export XDG_RUNTIME_DIR=/run/user/1000
+export LANG=C.UTF-8 LC_ALL=C.UTF-8
+export LIBSEAT_BACKEND=seatd SEATD_VTBOUND=0
+export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe LP_NUM_THREADS=4
+export QT_QUICK_BACKEND=software QSG_RENDER_LOOP=basic
+export XDG_DATA_DIRS=/opt/omarchy-android/hyprland/share:/usr/local/share:/usr/share
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Hyprland XDG_SESSION_DESKTOP=Hyprland
+mkdir -p "$HOME/.local/state/vegas"
+refresh=$(cat "$HOME/.config/vegas/refresh-mhz" 2>/dev/null) || refresh=30000
+case $refresh in 30000|60000|120000) ;; *) refresh=30000 ;; esac
+# The panel offers 60/90/120 Hz; drive it at 120 only when Hyprland renders at 120.
+weston_hz=60; (( refresh > 60000 )) && weston_hz=120
+weston_ini=$XDG_RUNTIME_DIR/weston-vegas.ini
+sed "s/^mode=1080x2388@60$/mode=1080x2388@$weston_hz/" /etc/xdg/weston/vegas.ini >"$weston_ini"
+weston --backend=drm --renderer=pixman --shell=kiosk --drm-device=card0 \
+  --continue-without-input --config="$weston_ini" \
+  --socket=wayland-vegas --idle-time=0 \
+  --log="$HOME/.local/state/vegas/weston.log" &
+weston_pid=$!
+trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+for ((attempt=0; attempt<150; attempt++)); do
+  [[ -S $XDG_RUNTIME_DIR/wayland-vegas ]] && break
+  sleep 0.1
+done
+[[ -S $XDG_RUNTIME_DIR/wayland-vegas ]] || exit 1
+export WAYLAND_DISPLAY=wayland-vegas
+export PATH=/opt/omarchy-android/hyprland/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export LD_LIBRARY_PATH=/opt/omarchy-android/aquamarine/lib
+# Optional root-prepared native Mali trial; Weston remains the tested DRM compositor.
+if [[ -f /run/vegas-gpu-ready && -c /dev/mali0 ]]; then
+  unset LIBGL_ALWAYS_SOFTWARE GALLIUM_DRIVER MESA_LOADER_DRIVER_OVERRIDE
+  export LD_LIBRARY_PATH=/opt/omarchy-android/aquamarine/lib:/opt/vegas-gpu/mesa-kbase/lib
+  export LIBGL_DRIVERS_PATH=/opt/vegas-gpu/mesa-kbase/lib/dri
+fi
+export AQ_NO_KMS_REQUIREMENT=1 AQ_NO_MODIFIERS=1 AQ_WAYLAND_REFRESH_MHZ="$refresh"
+export HYPRLAND_EGL_SURFACELESS=1 HYPRLAND_EGL_NO_MODIFIERS=1
+export HYPRLAND_ANDROID_DMABUF=0 HYPRLAND_GL_DMABUF_EXPORT=0 HYPRLAND_SHM_DAMAGE=1
+export HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 HYPRLAND_NO_RT=1
+export QT_QPA_PLATFORM=wayland GDK_BACKEND=wayland SDL_VIDEODRIVER=wayland
+export NO_AT_BRIDGE=1 QT_ACCESSIBILITY=0 GTK_A11Y=none
+export OMARCHY_PATH=/usr/share/omarchy OMARCHY_GPU_MODE=software
+[[ -f /run/vegas-gpu-ready ]] && export OMARCHY_GPU_MODE=mali
+export OMARCHY_OUTPUT_WIDTH=1080 OMARCHY_OUTPUT_HEIGHT=2388 OMARCHY_REFRESH_MHZ="$refresh" OMARCHY_SCALE=1.5
+# Select the ARM bundle's service-free launchers on this native Arch boot.
+export OMARCHY_PROOT=1 XWAYLAND_NO_GLAMOR=1 WVKBD_IMMEDIATE_DRAW=1
+dbus-run-session --config-file="$HOME/.config/omarchy/proot-session-bus.conf" \
+  /opt/omarchy-android/hyprland/bin/Hyprland --config "$HOME/.config/hypr/hyprland.lua"

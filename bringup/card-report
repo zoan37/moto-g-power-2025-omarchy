@@ -1,0 +1,18 @@
+#!/bin/sh
+export PATH=/bin
+printf 'Content-Type: text/plain\r\n\r\n'
+echo 'Read-only microSD survey; no filesystems mounted'
+echo "CARD_CID:$(cat /sys/class/block/mmcblk0/device/cid 2>/dev/null)"
+echo "CARD_TYPE:$(cat /sys/class/block/mmcblk0/device/type 2>/dev/null)"
+for p in /sys/class/block/mmcblk*; do
+    [ -d "$p" ] || continue
+    echo "BLOCK:$(basename "$p")"
+    cat "$p/size" "$p/uevent"
+done
+if [ -b /dev/mmcblk0 ]; then
+    blockdev --getsize64 /dev/mmcblk0
+    fdisk -l /dev/mmcblk0
+    for p in /dev/mmcblk0p*; do
+        [ -b "$p" ] && blkid "$p"
+    done
+fi

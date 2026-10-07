@@ -1,0 +1,23 @@
+#!/bin/sh
+# Read-only firmware partition ranges for matching vendor_dlkm driver extraction.
+export PATH=/bin
+fail() { printf 'Status: 400 Bad Request\r\nContent-Type: text/plain\r\n\r\n%s\n' "$1"; exit 1; }
+set -f
+oldifs=$IFS
+IFS=:
+set -- $QUERY_STRING
+IFS=$oldifs
+set +f
+[ "$#" -eq 2 ] || fail 'invalid parameters'
+case "$1:$2" in *[!0-9:]*|:*|*:) fail 'invalid numeric parameters' ;; esac
+[ "${#1}" -le 10 ] && [ "${#2}" -le 5 ] || fail 'numeric parameters exceed bound'
+[ "$2" -gt 0 ] && [ "$2" -le 16384 ] || fail 'range exceeds bound'
+node=
+for p in /sys/class/block/sd*; do
+    if grep -q '^PARTNAME=super$' "$p/uevent"; then node=$(basename "$p"); break; fi
+done
+[ -n "$node" ] || fail 'firmware super partition absent'
+bytes=$(blockdev --getsize64 "/dev/$node")
+[ "$1" -le "$((bytes/512-$2))" ] || fail 'range exceeds partition'
+printf 'Content-Type: application/octet-stream\r\nX-Super-Bytes: %s\r\n\r\n' "$bytes"
+dd if="/dev/$node" bs=512 skip="$1" count="$2" status=none

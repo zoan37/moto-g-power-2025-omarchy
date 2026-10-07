@@ -1,0 +1,12 @@
+#!/bin/sh
+export PATH=/bin
+printf 'Content-Type: text/plain\r\n\r\n'
+cat /proc/bus/input/devices
+echo MODULE_ERRORS
+grep -i -E 'ilitek|sensors_class|error|unknown symbol|failed' /run/modules.log
+echo TOUCH_KERNEL_LOG
+dmesg | grep -i -E 'ilitek|touchscreen|firmware.*fail' | tail -n 90
+echo C_GROUPS
+cat /proc/cgroups
+echo SYS_FS
+cat /proc/filesystems

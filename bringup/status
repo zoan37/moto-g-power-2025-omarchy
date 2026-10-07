@@ -1,0 +1,8 @@
+#!/bin/sh
+export PATH=/bin
+printf 'Content-Type: text/plain\r\n\r\n'
+id
+uname -a
+cat /sys/class/power_supply/battery/temp
+cat /sys/class/power_supply/battery/status
+echo "UPTIME:$(cut -d ' ' -f 1 /proc/uptime)"

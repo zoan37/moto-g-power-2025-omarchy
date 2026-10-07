@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "idle": {
+    "screensaver": 300,
+    "lock": 600
+  },
+  "bar": {
+    "id": "vegas.bar",
+    "phoneSafeTop": 56,
+    "phoneSideInset": 20,
+    "phoneBarHeight": 48,
+    "position": "top",
+    "transparent": false,
+    "centerAnchor": "omarchy.clock",
+    "layout": {
+      "left": [
+        {
+          "id": "omarchy.menu"
+        },
+        {
+          "id": "vegas.keyboard"
+        },
+        {
+          "id": "omarchy.workspaces"
+        }
+      ],
+      "center": [
+        {
+          "id": "omarchy.clock",
+          "format": "HH:mm"
+        }
+      ],
+      "right": [
+        {
+          "id": "omarchy.power"
+        }
+      ]
+    }
+  },
+  "plugins": []
+}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "vegas.bar",
+  "name": "Phone Bar",
+  "version": "1.0.0",
+  "author": "Omarchy; Vegas phone overrides",
+  "description": "Omarchy bar inset below the phone camera and rounded corners",
+  "kinds": [
+    "bar"
+  ],
+  "entryPoints": {
+    "bar": "Bar.qml"
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.bar"
+  }
+}

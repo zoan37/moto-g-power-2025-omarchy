@@ -1,0 +1,130 @@
+#!/bin/bash
+# Native Arch PID 1 for the stock Motorola kernel's missing devtmpfs/VT.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export LANG=C.UTF-8
+helper=/usr/local/libexec/vegas
+bb="$helper/busybox"
+mkdir -p /var/log/vegas /run/dbus /run/user/1000 /dev/shm /dev/pts /tmp
+mountpoint -q /tmp || mount -t tmpfs -o mode=1777 tmpfs /tmp
+mountpoint -q /dev/shm || mount -t tmpfs -o mode=1777 tmpfs /dev/shm
+chmod 1777 /tmp
+chown omarchy:omarchy /run/user/1000
+chmod 0700 /run/user/1000
+exec >>/var/log/vegas/init.log 2>&1
+echo "VEGAS_NATIVE_ARCH_PID1 pid=$$"
+uname -a
+"$helper/power-boot-report"
+"$bb" hostname moto-vegas
+chmod 0666 /dev/null /dev/zero /dev/full /dev/random /dev/urandom /dev/tty /dev/ptmx
+"$bb" ifconfig lo up
+"$bb" ifconfig usb0 192.168.77.1 netmask 255.255.255.252 up
+systemd-sysusers
+[[ -s /etc/machine-id ]] || dbus-uuidgen >/etc/machine-id
+mkdir -p /var/lib/dbus
+dbus-uuidgen --ensure=/var/lib/dbus/machine-id
+dbus-daemon --system --fork --nopidfile
+"$bb" httpd -f -p 192.168.77.1:8080 -h "$helper/www" &
+
+# Android's init normally creates device nodes. Populate them for Linux.
+for kind in char block; do
+  [[ $kind == char ]] && type=c || type=b
+  for event in /sys/dev/"$kind"/*/uevent; do
+    [[ -f $event ]] || continue
+    name= major= minor=
+    while IFS='=' read -r key value; do
+      case "$key" in DEVNAME) name=$value;; MAJOR) major=$value;; MINOR) minor=$value;; esac
+    done <"$event"
+    [[ -n $name && -n $major && -n $minor ]] || continue
+    mkdir -p "/dev/$(dirname "$name")"
+    [[ -e /dev/$name ]] || mknod "/dev/$name" "$type" "$major" "$minor"
+  done
+done
+mkdir -p /dev/dri
+[[ -e /dev/dri/card0 ]] || mknod /dev/dri/card0 c 226 0
+chgrp video /dev/dri/card0
+chmod 0660 /dev/dri/card0
+
+/usr/lib/systemd/systemd-udevd --daemon >>/var/log/vegas/udev.log 2>&1
+udevadm trigger --action=add
+udevadm settle --timeout=5
+getent group input >/dev/null || groupadd --system input
+usermod -aG input,video omarchy
+chgrp input /dev/input/event*
+chmod 0660 /dev/input/event*
+SEATD_VTBOUND=0 seatd -u omarchy -l debug >>/var/log/vegas/seatd.log 2>&1 &
+for ((attempt=0; attempt<50; attempt++)); do
+  [[ -S /run/seatd.sock ]] && break
+  sleep 0.1
+done
+
+# A fixed set of power requests replaces the unavailable systemd user manager.
+(
+  request=/run/user/1000/vegas-power-request
+  while sleep 2; do
+    [[ -f $request && ! -L $request ]] || continue
+    action=$(head -c 16 "$request")
+    rm -f "$request"
+    case "$action" in
+      reboot|poweroff|fastboot)
+        if "$helper/power-transition" "$action"; then
+          exit
+        fi
+        # A rejected shutdown or failed helper must not disable later requests.
+        echo "Power request failed: $action; continuing to watch"
+        ;;
+    esac
+  done
+) &
+
+# Retain a temperature guard for this new native port.
+(
+  while sleep 2; do
+    temp=$(cat /sys/class/power_supply/battery/temp 2>/dev/null)
+    if [[ $temp =~ ^[0-9]+$ ]] && (( temp >= 400 )); then
+      echo "Battery temperature guard: $temp"
+      "$helper/power-transition" fastboot
+      exit
+    fi
+  done
+) &
+if [[ ! -e /etc/vegas-persistent-boot ]]; then
+  (sleep 180; [[ -e /etc/vegas-persistent-boot ]] || "$helper/power-transition" fastboot) &
+fi
+if [[ -f /run/desktop-watchdog.pid ]]; then
+  read -r watchdog_pid </run/desktop-watchdog.pid
+  [[ $watchdog_pid =~ ^[0-9]+$ ]] && kill "$watchdog_pid" 2>/dev/null
+  rm -f /run/desktop-watchdog.pid
+fi
+
+# Mali desktop: an explicit one-boot trial, or the persistent mode the user
+# enables with vegas-gpu. Each persistent GPU boot is a strike until it stays
+# up 3 minutes; deliberate power transitions clear it. Two unconfirmed GPU
+# boots in a row turn GPU mode off so a crash cannot become a boot loop.
+gpu=0
+if [[ -f /var/lib/vegas/gpu-trial-once && ! -L /var/lib/vegas/gpu-trial-once ]]; then
+  rm -f /var/lib/vegas/gpu-trial-once
+  gpu=1
+fi
+gpu_flag=/home/omarchy/.config/vegas/gpu-desktop
+strike_file=/var/lib/vegas/gpu-boot-pending
+if [[ -f $gpu_flag && ! -L $gpu_flag ]]; then
+  strikes=$(cat "$strike_file" 2>/dev/null) || strikes=0
+  [[ $strikes =~ ^[0-9]+$ ]] || strikes=0
+  if (( strikes >= 2 )); then
+    mv -f "$gpu_flag" "$gpu_flag.disabled-unstable"
+    rm -f "$strike_file"
+    echo "GPU desktop disabled after $strikes unconfirmed boots; using software."
+  else
+    echo $((strikes + 1)) >"$strike_file"
+    sync
+    (sleep 180; rm -f "$strike_file"; sync) &
+    gpu=1
+  fi
+fi
+if (( gpu )) && ! timeout -k 2 60 "$helper/gpu-prepare" >>/var/log/vegas/gpu-prepare.log 2>&1; then
+  echo 'GPU preparation failed; using the original software desktop.'
+fi
+
+runuser -u omarchy -- env HOME=/home/omarchy USER=omarchy LOGNAME=omarchy \
+  /usr/local/bin/vegas-desktop >>/var/log/vegas/desktop.log 2>&1 &
+while true; do wait -n || sleep 1; done

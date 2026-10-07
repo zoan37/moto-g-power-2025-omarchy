@@ -1,0 +1,6 @@
+#!/bin/sh
+export PATH=/bin
+if grep -q '^/dev/mmcblk0p1 /mnt/arch ' /proc/mounts; then
+    umount /mnt/arch || exit 1
+fi
+sync

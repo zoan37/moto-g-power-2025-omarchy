@@ -1,0 +1,5 @@
+#!/bin/bash
+# Both autostart and the Keys button use the same geometry and layout.
+export WVKBD_IMMEDIATE_DRAW=1
+exec wvkbd-mobintl -H 450 -L 240 --fn 'Sans 20' -l phone,special,full \
+  --margin-bottom 32 --no-popup "$@"

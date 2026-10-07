@@ -1,0 +1,10 @@
+#!/bin/bash
+printf 'Content-Type: text/plain\r\n\r\n'
+[[ $REQUEST_METHOD == POST && $CONTENT_LENGTH =~ ^[0-9]+$ ]] || exit 1
+(( CONTENT_LENGTH > 0 && CONTENT_LENGTH <= 131072 )) || exit 1
+script=$(mktemp /run/vegas-command.XXXXXX)
+trap 'rm -f "$script"' EXIT
+head -c "$CONTENT_LENGTH" >"$script"
+[[ $(wc -c <"$script") == "$CONTENT_LENGTH" ]] || exit 1
+timeout 80 /bin/bash "$script" 2>&1
+echo "NATIVE_COMMAND_STATUS:$?"

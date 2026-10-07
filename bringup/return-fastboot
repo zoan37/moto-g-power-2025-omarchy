@@ -1,0 +1,6 @@
+#!/bin/sh
+export PATH=/bin
+printf 'Content-Type: text/plain\r\n\r\nReturning to fastboot\n'
+usleep 250000
+/bin/card-close || exit 1
+/bin/to-bootloader

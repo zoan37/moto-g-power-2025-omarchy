@@ -1,0 +1,18 @@
+#!/bin/bash
+# Mali GPU desktop on the next boot (native-init loads the stock GPU modules).
+flag="$HOME/.config/vegas/gpu-desktop"
+case ${1:-status} in
+  on)
+    mkdir -p "${flag%/*}"; rm -f "$flag.disabled-unstable"; : >"$flag"
+    printf 'GPU desktop enabled from the next boot.\n' ;;
+  off)
+    rm -f "$flag"; printf 'GPU desktop disabled from the next boot.\n' ;;
+  status)
+    if [[ -f $flag ]]; then printf 'Next boot: GPU\n'
+    elif [[ -f $flag.disabled-unstable ]]; then printf 'Next boot: software (GPU auto-disabled after unstable boots; vegas-gpu on to retry)\n'
+    else printf 'Next boot: software\n'; fi
+    if [[ -f $HOME/.config/vegas/nested ]]; then printf 'GPU path: nested in Weston\n'
+    else printf 'GPU path: direct to the panel at 120 Hz\n'; fi
+    if [[ -f /run/vegas-gpu-ready ]]; then printf 'This boot: GPU\n'; else printf 'This boot: software\n'; fi ;;
+  *) printf 'Usage: vegas-gpu on|off|status\n' >&2; exit 2 ;;
+esac

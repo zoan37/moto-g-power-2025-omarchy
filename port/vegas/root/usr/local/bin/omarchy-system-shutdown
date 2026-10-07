@@ -1,0 +1,5 @@
+#!/bin/bash
+if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
+  exec foot --hold --app-id=vegas-shutdown --title='Power off' vegas-power poweroff
+fi
+exec vegas-power poweroff

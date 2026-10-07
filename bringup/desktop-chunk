@@ -1,0 +1,3 @@
+#!/bin/sh
+export CARD_DESKTOP=1
+exec /bin/sh /www/cgi-bin/card-chunk

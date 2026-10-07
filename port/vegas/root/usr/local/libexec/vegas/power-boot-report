@@ -1,0 +1,18 @@
+#!/bin/bash
+# Small private boot record to distinguish a charger boot from a reset.
+umask 077
+directory=/var/log/vegas/power
+mkdir -p "$directory"
+[[ ! -f $directory/boot.log ]] || cp "$directory/boot.log" "$directory/previous-boot.log"
+{
+  date -Is
+  printf 'BOOT_ID:'; cat /proc/sys/kernel/random/boot_id
+  printf 'UPTIME:'; cat /proc/uptime
+  printf 'BOOTCONFIG_POWER_FIELDS\n'
+  [[ ! -r /proc/bootconfig ]] || grep -E '^androidboot\.(bootreason|boot_reason|mode|force_normal_boot|poweroff_alarm)[[:space:]=]' /proc/bootconfig
+  printf 'CMDLINE_POWER_FIELDS\n'
+  tr ' ' '\n' </proc/cmdline | grep -E '^(androidboot\.(bootreason|boot_reason|mode|force_normal_boot|poweroff_alarm)|boot_reason)='
+  printf 'KERNEL_POWER_CONTEXT\n'
+  dmesg | grep -Ei 'boot.reason|boot.mode|kpoc|psci|watchdog|reboot:|power down' | head -n 80
+} >"$directory/boot.log"
+exit 0

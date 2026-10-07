@@ -1,0 +1,143 @@
+#!/bin/sh
+# Native Linux diagnostic ramdisk for vegas. Never mounts internal phone storage.
+# Explicit card provisioning can format and mount only the confirmed microSD.
+export PATH=/bin:/sbin
+export HOME=/root
+export PS1='vegas-linux# '
+/bin/busybox --install -s /bin
+mkdir -p /proc /sys /dev /run /tmp /root /dev/pts /sys/kernel/config
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs -o mode=0755 tmpfs /dev
+mknod /dev/null c 1 3
+mknod /dev/zero c 1 5
+mknod /dev/console c 5 1
+mknod /dev/kmsg c 1 11
+exec >/dev/kmsg 2>&1
+echo 'VEGAS_NATIVE_LINUX_INIT_STARTED'
+mount -t tmpfs tmpfs /run
+mount -t tmpfs tmpfs /tmp
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts
+ln -s /proc/self/fd /dev/fd
+ln -s /proc/self/fd/0 /dev/stdin
+ln -s /proc/self/fd/1 /dev/stdout
+ln -s /proc/self/fd/2 /dev/stderr
+mount -t configfs configfs /sys/kernel/config
+
+# Return to the bootloader after three minutes, including failed module loads.
+# No Android thermal userspace runs in this experiment; stock charging is not
+# established safe for sustained use. The host must restore stock init_boot.
+runtime=$(cat /boot-runtime 2>/dev/null)
+case "$runtime" in 180|360) ;; *) runtime=180 ;; esac
+( sleep "$runtime"; echo 'Diagnostic timeout: returning to bootloader'; /bin/card-close; /bin/to-bootloader ) &
+timeout_pid=$!
+
+# The builder orders Android's flat module directory by its dependency graph.
+while read -r module; do
+    [ -n "$module" ] || continue
+    echo "Loading $module" >>/run/modules.log
+    insmod "/lib/modules/$module" >>/run/modules.log 2>&1
+done </module-order
+make_devices() {
+    for kind in char block; do
+        case "$kind" in char) type=c ;; block) type=b ;; esac
+        for uevent in /sys/dev/"$kind"/*/uevent; do
+            [ -f "$uevent" ] || continue
+            devname= major= minor=
+            while IFS='=' read -r key value; do
+                case "$key" in
+                    DEVNAME) devname=$value ;; MAJOR) major=$value ;; MINOR) minor=$value ;;
+                esac
+            done <"$uevent"
+            [ -n "$devname" ] && [ -n "$major" ] && [ -n "$minor" ] || continue
+            mkdir -p "/dev/$(dirname "$devname")"
+            [ -e "/dev/$devname" ] || mknod "/dev/$devname" "$type" "$major" "$minor"
+        done
+    done
+}
+make_devices
+
+# Export a serial shell and a point-to-point USB Ethernet diagnostic link.
+g=/sys/kernel/config/usb_gadget/vegas_linux
+mkdir -p "$g"
+echo 0x1d6b >"$g/idVendor"
+echo 0x0104 >"$g/idProduct"
+echo 0x0200 >"$g/bcdUSB"
+mkdir -p "$g/strings/0x409"
+echo vegas-linux-dev >"$g/strings/0x409/serialnumber"
+echo 'Linux development' >"$g/strings/0x409/manufacturer"
+echo 'Vegas native Linux diagnostic' >"$g/strings/0x409/product"
+mkdir -p "$g/configs/c.1/strings/0x409"
+echo 'USB shell and network' >"$g/configs/c.1/strings/0x409/configuration"
+echo 100 >"$g/configs/c.1/MaxPower"
+mkdir -p "$g/functions/acm.usb0"
+ln -s "$g/functions/acm.usb0" "$g/configs/c.1/"
+mkdir -p "$g/functions/ecm.usb0"
+echo 02:00:00:00:77:01 >"$g/functions/ecm.usb0/dev_addr"
+echo 02:00:00:00:77:02 >"$g/functions/ecm.usb0/host_addr"
+ln -s "$g/functions/ecm.usb0" "$g/configs/c.1/"
+if echo 11201000.usb0 >"$g/UDC"; then
+    echo 'VEGAS_NATIVE_LINUX_USB_BOUND'
+fi
+make_devices
+# The vendor DRM driver advertises its connectors but may omit the primary
+# node's DEVNAME. Its registered DRM major and observed minor 0 identify it.
+if [ -d /sys/class/drm/card0-DSI-1 ] && grep -q '^[[:space:]]*226 drm$' /proc/devices; then
+    mkdir -p /dev/dri
+    [ -e /dev/dri/card0 ] || mknod /dev/dri/card0 c 226 0
+fi
+echo 'VEGAS_NATIVE_LINUX_MODULE_LOADING_FINISHED'
+ifconfig usb0 192.168.77.1 netmask 255.255.255.252 up
+# Only this point-to-point USB IP hosts the diagnostic CGI scripts.
+httpd -f -p 192.168.77.1:8080 -h /www &
+httpd_pid=$!
+
+if [ -f /boot-desktop ]; then
+    if (
+        . /bin/card-guard
+        guard_card "$(cat /boot-card-cid)"
+        mount_card
+    ) && [ -x /mnt/arch/omarchy/usr/local/libexec/vegas/native-init ]; then
+        mkdir -p /newroot
+        mount --bind /mnt/arch/omarchy /newroot || /bin/to-bootloader
+        mkdir -p /newroot/usr/local/libexec/vegas/www/cgi-bin
+        cp /bin/busybox /bin/to-bootloader /newroot/usr/local/libexec/vegas/
+        cp /www/cgi-bin/card-report /www/cgi-bin/hardware-report /newroot/usr/local/libexec/vegas/www/cgi-bin/
+        cp /run/modules.log /newroot/var/log/vegas-modules.log
+        # This static process needs no old-root files after switch_root.
+        /bin/desktop-watchdog &
+        echo "$!" >/run/desktop-watchdog.pid
+        kill "$httpd_pid" "$timeout_pid"
+        sync
+        for name in dev proc sys run; do
+            mkdir -p "/newroot/$name"
+            mount --move "/$name" "/newroot/$name" || /bin/to-bootloader
+        done
+        umount /mnt/arch
+        exec /bin/busybox switch_root /newroot /usr/local/libexec/vegas/native-init
+    else
+        echo 'Verified desktop root unavailable; retaining USB diagnostics'
+    fi
+fi
+
+# Stop early if the battery reaches 40 C. Sysfs temp uses tenths of a degree.
+(
+    while sleep 2; do
+        temp=$(cat /sys/class/power_supply/battery/temp 2>/dev/null)
+        case "$temp" in ''|*[!0-9]*) continue ;; esac
+        if [ "$temp" -ge 400 ]; then
+            echo "Battery temperature guard: $temp"
+            /bin/card-close
+            /bin/to-bootloader
+        fi
+    done
+) &
+while :; do
+    if [ -c /dev/ttyGS0 ]; then
+        # A PTY gives the shell a controlling terminal. cttyhack does not
+        # recognize ttyGS0 and prints warnings that can feed back over USB.
+        script -q -c '/bin/sh -i' /dev/null </dev/ttyGS0 >/dev/ttyGS0 2>&1
+    fi
+    sleep 1
+done

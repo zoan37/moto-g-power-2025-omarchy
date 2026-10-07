@@ -1,0 +1,24 @@
+#!/bin/sh
+# Read-only, fixed partition whitelist for the isolated USB diagnostic link.
+export PATH=/bin
+name=$QUERY_STRING
+case "$name" in
+    nvram) node=sdc5 ;; nvcfg) node=sdc6 ;; nvdata) node=sdc7 ;;
+    persist) node=sdc24 ;; prodpersist) node=sdc25 ;;
+    protect1) node=sdc31 ;; protect2) node=sdc32 ;;
+    proinfo) node=sdc20 ;; cid) node=sdc8 ;;
+    utags) node=sdc9 ;; utagsBackup) node=sdc10 ;;
+    boot_b) node=sdc72 ;; vendor_boot_b) node=sdc73 ;;
+    lk_b) node=sdc71 ;; dtbo_b) node=sdc77 ;;
+    vbmeta_b) node=sdc16 ;; vbmeta_system_b) node=sdc17 ;;
+    *) printf 'Status: 400 Bad Request\r\n\r\n'; exit 1 ;;
+esac
+if ! grep -q "^PARTNAME=$name\$" "/sys/class/block/$node/uevent"; then
+    printf 'Status: 409 Partition mismatch\r\n\r\n'
+    exit 1
+fi
+size=$(blockdev --getsize64 "/dev/$node")
+digest=$(sha256sum "/dev/$node")
+digest=${digest%% *}
+printf 'Content-Type: application/gzip\r\nX-Partition: %s\r\nX-Raw-Bytes: %s\r\nX-Raw-SHA256: %s\r\n\r\n' "$name" "$size" "$digest"
+gzip -c "/dev/$node"

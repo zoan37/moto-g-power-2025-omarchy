@@ -1,0 +1,22 @@
+#!/bin/sh
+printf 'Content-Type: text/plain\r\n\r\n'
+. /bin/card-guard
+[ "$REQUEST_METHOD" = POST ] || fail 'POST required'
+guard_card "$QUERY_STRING"
+grep -q '^/dev/mmcblk' /proc/mounts && fail 'card is mounted'
+echo 'Native formatter details:'
+ls -l /bin/mke2fs /usr/lib /lib/ld-linux-aarch64.so.1
+/bin/mke2fs -V 2>&1
+dd if=/card-layout.mbr of=/dev/mmcblk0 bs=512 count=1 conv=notrunc,fsync || fail 'partition table write failed'
+blockdev --rereadpt /dev/mmcblk0 || fail 'partition table reload failed'
+[ "$(cat /sys/class/block/mmcblk0p1/start)" = 2048 ] || fail 'unexpected partition start'
+[ "$(cat /sys/class/block/mmcblk0p1/size)" = 62519296 ] || fail 'unexpected partition size'
+# Avoid features unavailable in stock 5.15 and background metadata writes.
+/bin/mke2fs -q -F -t ext4 -b 4096 -i 65536 -m 1 -L vegas-arch -O ^orphan_file \
+    -E nodiscard,lazy_itable_init=0,lazy_journal_init=0 /dev/mmcblk0p1 2>&1 || fail 'format failed'
+mount_card
+mkdir -p /mnt/arch/.provision
+cp /bin/busybox /mnt/arch/.provision/busybox || fail 'helper copy failed'
+chmod 755 /mnt/arch/.provision/busybox
+sync
+echo CARD_PREPARED

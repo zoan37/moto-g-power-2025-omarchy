@@ -1,0 +1,14 @@
+{
+  "Valhalla": {
+    "url": "https://github.com/crabcakes97/Valhalla",
+    "commit": "9535f793398082e7597bfc5063de4837ae7b471c"
+  },
+  "omarchy-arm": {
+    "url": "https://github.com/alexisraitano-myffu/omarchy-arm",
+    "commit": "579f15c699dab01e2b3b12e2c4d2503873359be9"
+  },
+  "val-protocol": {
+    "url": "https://github.com/Maikyxd/val-protocol",
+    "commit": "dc7f41f9b1a32da1a78ef327bb62d2bef17d7bd0"
+  }
+}

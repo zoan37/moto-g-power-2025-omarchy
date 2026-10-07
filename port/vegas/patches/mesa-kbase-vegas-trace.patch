@@ -1,0 +1,83 @@
+diff --git i/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c w/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c
+index ba7c1b8..126c43e 100644
+--- i/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c
++++ w/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c
+@@ -267,6 +267,9 @@ pipe_loader_drm_create_screen(struct pipe_loader_device *dev,
+ {
+    struct pipe_loader_drm_device *ddev = pipe_loader_drm_device(dev);
+ 
++   if (getenv("VEGAS_GPU_TRACE"))
++      fprintf(stderr, "[vegas-gpu] pipe descriptor: %s fd=%d\n",
++              ddev->dd->driver_name, ddev->fd);
+    return ddev->dd->create_screen(ddev->fd, config);
+ }
+ 
+diff --git i/src/gallium/drivers/panfrost/pan_screen.c w/src/gallium/drivers/panfrost/pan_screen.c
+index cdf60e5..894b340 100644
+--- i/src/gallium/drivers/panfrost/pan_screen.c
++++ w/src/gallium/drivers/panfrost/pan_screen.c
+@@ -859,6 +859,8 @@ panfrost_get_driver_query_info(struct pipe_screen *pscreen, unsigned index,
+ struct pipe_screen *
+ panfrost_create_screen(int fd, struct renderonly *ro)
+ {
++        if (getenv("VEGAS_GPU_TRACE"))
++           fprintf(stderr, "[vegas-gpu] Panfrost create fd=%d\n", fd);
+         /* Create the screen */
+         struct panfrost_screen *screen = rzalloc(NULL, struct panfrost_screen);
+ 
+@@ -870,6 +872,8 @@ panfrost_create_screen(int fd, struct renderonly *ro)
+         /* Debug must be set first for pandecode to work correctly */
+         dev->debug = debug_get_flags_option("PAN_MESA_DEBUG", panfrost_debug_options, 0);
+         panfrost_open_device(screen, fd, dev);
++        if (getenv("VEGAS_GPU_TRACE"))
++           fprintf(stderr, "[vegas-gpu] Panfrost device id=%x kbase=%d\n", dev->gpu_id, dev->kbase);
+ 
+         if (dev->debug & PAN_DBG_NO_AFBC)
+                 dev->has_afbc = false;
+diff --git i/src/panfrost/base/pan_base.c w/src/panfrost/base/pan_base.c
+index 22dc09c..d3870b9 100644
+--- i/src/panfrost/base/pan_base.c
++++ w/src/panfrost/base/pan_base.c
+@@ -53,17 +53,24 @@ kbase_open(kbase k, int fd, unsigned cs_queue_count, bool verbose)
+         if (k->fd == -1)
+            return kbase_open_csf_noop(k);
+ 
++        const bool trace = getenv("VEGAS_GPU_TRACE") != NULL;
+         struct kbase_ioctl_version_check ver = { 0 };
+ 
+         if (ioctl(k->fd, KBASE_IOCTL_VERSION_CHECK_RESERVED, &ver) == 0) {
++                if (trace)
++                        fprintf(stderr, "[vegas-gpu] Kbase CSF API %u.%u\n", ver.major, ver.minor);
+                 return kbase_open_csf(k);
+         } else if (ioctl(k->fd, KBASE_IOCTL_VERSION_CHECK, &ver) == 0) {
++                if (trace)
++                        fprintf(stderr, "[vegas-gpu] Kbase JM API %u.%u\n", ver.major, ver.minor);
+                 if (ver.major == 3)
+                         return kbase_open_old(k);
+                 else
+                         return kbase_open_new(k);
+         }
+ 
++        if (trace)
++                fprintf(stderr, "[vegas-gpu] Kbase version check failed: %s\n", strerror(errno));
+         return false;
+ }
+ 
+diff --git i/src/panfrost/base/pan_vX_base.c w/src/panfrost/base/pan_vX_base.c
+index 4c9c273..d560e1d 100644
+--- i/src/panfrost/base/pan_vX_base.c
++++ w/src/panfrost/base/pan_vX_base.c
+@@ -1892,7 +1892,13 @@ kbase_open_csf
+ 
+         for (unsigned i = 0; i < ARRAY_SIZE(kbase_main); ++i) {
+                 ++k->setup_state;
++                if (getenv("VEGAS_GPU_TRACE"))
++                        fprintf(stderr, "[vegas-gpu] Kbase API %u: %s\n",
++                                PAN_BASE_API, kbase_main[i].label);
+                 if (!kbase_main[i].part(k)) {
++                        if (getenv("VEGAS_GPU_TRACE"))
++                                fprintf(stderr, "[vegas-gpu] Kbase failed: %s\n",
++                                        kbase_main[i].label);
+                         k->close(k);
+                         return false;
+                 }

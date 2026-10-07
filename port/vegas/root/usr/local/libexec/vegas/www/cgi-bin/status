@@ -1,0 +1,9 @@
+#!/bin/bash
+printf 'Content-Type: text/plain\r\n\r\n'
+id
+uname -a
+echo "UPTIME:$(cut -d ' ' -f 1 /proc/uptime)"
+echo "NATIVE_PID1:$(cat /proc/1/comm)"
+echo "ROOT_FILESYSTEM:$(findmnt -n -o SOURCE /)"
+cat /sys/class/power_supply/battery/temp
+cat /sys/class/power_supply/battery/status

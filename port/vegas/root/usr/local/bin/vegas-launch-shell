@@ -1,0 +1,47 @@
+#!/bin/bash
+# The native service-free session uses the bundle's prepared plugin index.
+prepare_proot_plugin_index() {
+  local output="$XDG_RUNTIME_DIR/omarchy-plugin-scan.txt"
+  local temporary="${output}.new"
+  local manifest sub line
+  local plugin_root="$OMARCHY_PATH/shell/plugins"
+  local -a manifests
+
+  : > "$temporary"
+  shopt -s nullglob
+  manifests=(
+    "$plugin_root"/*/manifest.json
+    "$plugin_root"/*/*/manifest.json
+    "$plugin_root"/*/*/*.manifest.json
+  )
+
+  for manifest in "${manifests[@]}"; do
+    if [[ ${manifest##*/} == manifest.json ]]; then
+      sub=${manifest%/manifest.json}
+    else
+      sub=${manifest%/*}
+    fi
+    printf '===firstparty::%s===\n' "$sub" >> "$temporary"
+    while IFS= read -r line || [[ -n $line ]]; do
+      printf '%s\n' "$line" >> "$temporary"
+    done < "$manifest"
+    printf '\n=== EOM ===\n' >> "$temporary"
+  done
+
+  for sub in "$HOME/.config/omarchy/plugins"/*/; do
+    [[ -f "$sub/manifest.json" ]] || continue
+    printf '===thirdparty::%s===\n' "${sub%/}" >> "$temporary"
+    while IFS= read -r line || [[ -n $line ]]; do
+      printf '%s\n' "$line" >> "$temporary"
+    done < "$sub/manifest.json"
+    printf '\n=== EOM ===\n' >> "$temporary"
+  done
+
+  mv -f -- "$temporary" "$output"
+}
+
+prepare_proot_plugin_index
+[[ ${1:-} == --index-only ]] && exit 0
+export QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1
+export QT_QUICK_BACKEND=software QSG_RENDER_LOOP=basic QT_QPA_PLATFORMTHEME=
+exec /usr/share/omarchy/bin/omarchy-launch-shell >>"$HOME/.local/state/vegas/quickshell.log" 2>&1

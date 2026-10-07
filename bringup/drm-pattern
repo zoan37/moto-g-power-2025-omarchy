@@ -1,0 +1,14 @@
+#!/bin/sh
+export PATH=/bin
+printf 'Content-Type: text/plain\r\n\r\n'
+resources=$(timeout 12 modetest -D /dev/dri/card0 -c -p)
+connector=$(printf '%s\n' "$resources" | awk '$3=="connected" && $4=="DSI-1" {print $1; exit}')
+crtc=$(printf '%s\n' "$resources" | awk '/^CRTCs:/{s=1; next} s && $1~/^[0-9]+$/{print $1; exit}')
+plane=$(printf '%s\n' "$resources" | awk '/^Planes:/{s=1; next} s && $1~/^[0-9]+$/ && $NF~/^0x[0-9a-f]+$/{id=$1; mask=$NF} s && $1=="value:" && $2=="1" && mask=="0x00000001"{print id; exit}')
+case "$connector" in ''|*[!0-9]*) echo 'DSI connector not found'; exit 1 ;; esac
+case "$crtc:$plane" in *[!0-9:]*|:*|*:) echo 'Compatible primary plane/CRTC not found'; exit 1 ;; esac
+# In this upstream release atomic -s alone silently skips modesetting unless
+# a plane is also specified. Use the live primary plane and a 60 Hz panel mode.
+echo "PATTERN_TARGET connector=$connector crtc=$crtc plane=$plane"
+( sleep 8; echo ) | timeout 12 /bin/modetest -D /dev/dri/card0 -a -s "$connector@$crtc:1080x2388-60@XR24" -P "$plane@$crtc:1080x2388@XR24" 2>&1
+echo "PATTERN_STATUS:$?"

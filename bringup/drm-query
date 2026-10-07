@@ -1,0 +1,9 @@
+#!/bin/sh
+export PATH=/bin
+printf 'Content-Type: text/plain\r\n\r\n'
+timeout 12 /bin/modetest -D /dev/dri/card0 -c -p 2>&1
+for p in /sys/class/backlight/* /sys/class/leds/lcd-backlight; do
+    [ -d "$p" ] || continue
+    echo "BACKLIGHT:$p"
+    cat "$p/brightness" "$p/max_brightness" 2>/dev/null
+done

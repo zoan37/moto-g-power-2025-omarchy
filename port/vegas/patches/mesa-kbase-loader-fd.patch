@@ -1,0 +1,20 @@
+--- a/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c
++++ b/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c
+@@ -188,7 +188,16 @@
+    bool ret;
+    int new_fd;
+ 
+-   if (fd < 0 || (new_fd = os_dupfd_cloexec(fd)) < 0)
++   if (fd < 0)
++      return false;
++
++   /* Stock MediaTek JM Kbase revokes a file's context on close even when
++    * another descriptor refers to it. The caller closes its fd after this
++    * probe, so a dup would already be unusable when screen creation starts.
++    * Open an independent Kbase file; retain normal dup semantics for DRM. */
++   new_fd = loader_is_kbase_device_fd(fd) ? loader_open_kbase_device()
++                                        : os_dupfd_cloexec(fd);
++   if (new_fd < 0)
+       return false;
+ 
+    ret = pipe_loader_drm_probe_fd_nodup(dev, new_fd);

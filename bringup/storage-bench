@@ -1,0 +1,12 @@
+#!/bin/sh
+export PATH=/bin
+printf 'Content-Type: text/plain\r\n\r\n'
+grep -q '^PARTNAME=boot_b$' /sys/class/block/sdc72/uevent || exit 1
+[ "$(cat /sys/class/block/mmcblk0/device/type)" = SD ] || exit 1
+[ "$(blockdev --getsize64 /dev/sdc72)" -ge 67108864 ] || exit 1
+echo 'Read-only sequential comparison, 64 MiB each, O_DIRECT; not a random-I/O or write benchmark'
+for kind in INTERNAL MICROSD; do
+    case "$kind" in INTERNAL) target=/dev/sdc72 ;; MICROSD) target=/dev/mmcblk0p1 ;; esac
+    echo "BENCH:$kind"
+    /bin/busybox time -p /bin/busybox dd if="$target" of=/dev/null bs=4M count=16 iflag=direct 2>&1
+done
