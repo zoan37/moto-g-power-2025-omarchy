@@ -40,4 +40,6 @@ if [[ ! -f $conf ]]; then
 fi
 wpa_supplicant -B -i wlan0 -D nl80211 -c "$conf" -s </dev/null >/dev/null 2>&1
 dhcpcd -b -q wlan0 </dev/null >/dev/null 2>&1
+# No systemd-timesyncd here: keep the clock synced (busybox ntpd retries until online).
+/usr/local/libexec/vegas/busybox ntpd -p pool.ntp.org </dev/null >/dev/null 2>&1
 echo "Wi-Fi up: $(cat /sys/class/net/wlan0/address)"
