@@ -1,0 +1,25 @@
+# Repackaged Google Chrome arm64 .deb for the vegas phone (Arch Linux ARM).
+pkgname=google-chrome
+pkgver=155.0.8059.39
+pkgrel=1
+pkgdesc='Google Chrome (official arm64 build) with a Wayland launcher for the vegas phone'
+arch=('aarch64')
+url='https://www.google.com/chrome/'
+license=('custom:chrome')
+depends=('alsa-lib' 'gtk3' 'libcups' 'libxss' 'libxtst' 'nss' 'ttf-liberation' 'xdg-utils')
+options=('!strip' '!debug' '!emptydirs')
+_deb="google-chrome-stable_${pkgver}-1_arm64.deb"
+source=("$_deb::https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/$_deb"
+        'google-chrome-stable.sh')
+sha256sums=('3556494580a71ecee15cbeb3b6ce23bf3af360bc053d90d3105241c2247da52b'
+            'SKIP')
+noextract=("$_deb")
+package() {
+  bsdtar -xOf "$srcdir/$_deb" data.tar.xz | bsdtar -x -C "$pkgdir" -f -
+  rm -rf "$pkgdir/etc/cron.daily" "$pkgdir/usr/share/menu"
+  rm -f "$pkgdir/usr/bin/google-chrome-stable"
+  install -Dm755 "$srcdir/google-chrome-stable.sh" "$pkgdir/usr/bin/google-chrome-stable"
+  ln -sf google-chrome-stable "$pkgdir/usr/bin/google-chrome"
+  # The setuid helper is Chrome's sandbox on kernels without user namespaces.
+  chmod 4755 "$pkgdir/opt/google/chrome/chrome-sandbox"
+}

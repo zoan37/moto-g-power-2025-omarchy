@@ -1,0 +1,5 @@
+#!/bin/bash
+# Phone override (found before /usr/share/omarchy/bin on PATH): open Omarchy
+# web apps in Google Chrome, which keeps its setuid sandbox here, instead of
+# the bundle's no-sandbox Chromium path.
+exec google-chrome-stable --app="$1" "${@:2}"
