@@ -1,0 +1,303 @@
+diff --git i/src/gallium/drivers/panfrost/pan_context.c w/src/gallium/drivers/panfrost/pan_context.c
+index 52245e3..52793cc 100644
+--- i/src/gallium/drivers/panfrost/pan_context.c
++++ w/src/gallium/drivers/panfrost/pan_context.c
+@@ -898,6 +898,13 @@ panfrost_fence_server_sync(struct pipe_context *pctx,
+         struct panfrost_context *ctx = pan_context(pctx);
+         int fd = -1, ret;
+ 
++        /* kbase: no in-fence plumbing into JM submits yet, so wait on the CPU
++         * before any later work is queued (correct, if less parallel). */
++        if (dev->kbase) {
++                pctx->screen->fence_finish(pctx->screen, NULL, f, PIPE_TIMEOUT_INFINITE);
++                return;
++        }
++
+         ret = drmSyncobjExportSyncFile(dev->fd, f->syncobj, &fd);
+         assert(!ret);
+ 
+diff --git i/src/gallium/drivers/panfrost/pan_fence.c w/src/gallium/drivers/panfrost/pan_fence.c
+index f989269..33f73e7 100644
+--- i/src/gallium/drivers/panfrost/pan_fence.c
++++ w/src/gallium/drivers/panfrost/pan_fence.c
+@@ -30,6 +30,10 @@
+ #include "pan_fence.h"
+ #include "pan_screen.h"
+ 
++#include <errno.h>
++#include <poll.h>
++
++#include "util/os_file.h"
+ #include "util/os_time.h"
+ #include "util/u_inlines.h"
+ 
+@@ -42,9 +46,12 @@ panfrost_fence_reference(struct pipe_screen *pscreen,
+         struct pipe_fence_handle *old = *ptr;
+ 
+         if (pipe_reference(&old->reference, &fence->reference)) {
+-                if (dev->kbase)
+-                        dev->mali.syncobj_destroy(&dev->mali, old->kbase);
+-                else
++                if (dev->kbase) {
++                        if (old->kbase)
++                                dev->mali.syncobj_destroy(&dev->mali, old->kbase);
++                        if (old->sync_fd >= 0)
++                                close(old->sync_fd);
++                } else
+                         drmSyncobjDestroy(dev->fd, old->syncobj);
+                 free(old);
+         }
+@@ -68,6 +75,20 @@ panfrost_fence_finish(struct pipe_screen *pscreen,
+         if (abs_timeout == OS_TIMEOUT_INFINITE)
+                 abs_timeout = INT64_MAX;
+ 
++        if (dev->kbase && fence->sync_fd >= 0) {
++                /* A sync_file polls readable once signaled. */
++                struct pollfd pfd = { .fd = fence->sync_fd, .events = POLLIN };
++                int64_t now = os_time_get_nano();
++                int ms = abs_timeout == INT64_MAX ? -1 :
++                         abs_timeout <= now ? 0 :
++                         (int) MIN2((abs_timeout - now + 999999) / 1000000, INT32_MAX);
++                do {
++                        ret = poll(&pfd, 1, ms);
++                } while (ret < 0 && (errno == EINTR || errno == EAGAIN));
++                fence->signaled = ret > 0;
++                return fence->signaled;
++        }
++
+         if (dev->kbase) {
+                 /* TODO: Use the timeout */
+                 bool ret = dev->mali.syncobj_wait(&dev->mali, fence->kbase);
+@@ -91,9 +112,14 @@ panfrost_fence_get_fd(struct pipe_screen *screen,
+         struct panfrost_device *dev = pan_device(screen);
+         int fd = -1;
+ 
+-        /* TODO: Export a sync file using KCPU */
+-        if (dev->kbase)
++        if (dev->kbase) {
++                if (f->sync_fd >= 0)
++                        return os_dupfd_cloexec(f->sync_fd);
++                /* JM: a kernel sync_file triggered after the fence's atoms. */
++                if (f->kbase && dev->mali.syncobj_export_fd)
++                        return dev->mali.syncobj_export_fd(&dev->mali, f->kbase);
+                 return fd;
++        }
+ 
+         drmSyncobjExportSyncFile(dev->fd, f->syncobj, &fd);
+         return fd;
+@@ -106,9 +132,21 @@ panfrost_fence_from_fd(struct panfrost_context *ctx, int fd,
+         struct panfrost_device *dev = pan_device(ctx->base.screen);
+         int ret;
+ 
+-        /* TODO: Implement this for kbase */
+-        if (dev->kbase)
+-                return NULL;
++        if (dev->kbase) {
++                /* Keep our own reference to the sync_file; waits poll it. */
++                if (type != PIPE_FD_TYPE_NATIVE_SYNC)
++                        return NULL;
++                struct pipe_fence_handle *f = calloc(1, sizeof(*f));
++                if (!f)
++                        return NULL;
++                f->sync_fd = os_dupfd_cloexec(fd);
++                if (f->sync_fd < 0) {
++                        free(f);
++                        return NULL;
++                }
++                pipe_reference_init(&f->reference, 1);
++                return f;
++        }
+ 
+         struct pipe_fence_handle *f = calloc(1, sizeof(*f));
+         if (!f)
+@@ -158,6 +196,7 @@ panfrost_fence_create(struct panfrost_context *ctx)
+                         return NULL;
+ 
+                 f->kbase = dev->mali.syncobj_dup(&dev->mali, ctx->syncobj_kbase);
++                f->sync_fd = -1;
+                 pipe_reference_init(&f->reference, 1);
+                 return f;
+         }
+diff --git i/src/gallium/drivers/panfrost/pan_fence.h w/src/gallium/drivers/panfrost/pan_fence.h
+index a52c5c7..dfeac98 100644
+--- i/src/gallium/drivers/panfrost/pan_fence.h
++++ w/src/gallium/drivers/panfrost/pan_fence.h
+@@ -33,6 +33,8 @@ struct pipe_fence_handle {
+         struct pipe_reference reference;
+         uint32_t syncobj;
+         struct kbase_syncobj *kbase;
++        /* kbase: an imported sync_file (EGL_ANDROID_native_fence_sync), or -1 */
++        int sync_fd;
+         bool signaled;
+ };
+ 
+diff --git i/src/panfrost/base/pan_base.h w/src/panfrost/base/pan_base.h
+index 0b735f3..98ed6d1 100644
+--- i/src/panfrost/base/pan_base.h
++++ w/src/panfrost/base/pan_base.h
+@@ -191,6 +196,10 @@ struct kbase_ {
+         /* TODO: timeout? (and for cs_wait) */
+         bool (*syncobj_wait)(kbase k, struct kbase_syncobj *o);
+ 
++        /* JM only (NULL on CSF): a sync_file fd that signals once every atom
++         * tracked by @o has completed, or -1. */
++        int (*syncobj_export_fd)(kbase k, struct kbase_syncobj *o);
++
+         /* Returns false if there are no active queues */
+         bool (*callback_all_queues)(kbase k, int32_t *count,
+                                     void (*callback)(void *), void *data);
+diff --git i/src/panfrost/base/pan_vX_base.c w/src/panfrost/base/pan_vX_base.c
+index 4c9c273..09fff85 100644
+--- i/src/panfrost/base/pan_vX_base.c
++++ w/src/panfrost/base/pan_vX_base.c
+@@ -1178,6 +1230,140 @@ kbase_wait_jm_atoms_idle(kbase k)
+         return false;
+ }
+ 
++#if PAN_BASE_API == 1
++/* Submit a software atom (a dependency-only merge or a fence trigger) ordered
++ * after up to two atoms (0 means none). Caller holds jm_submit_lock and has
++ * reserved enough atom numbers that no ID wrap happens here. The atom holds no
++ * BOs; a -1 placeholder handle keeps it visible to the in-flight checks
++ * (atom_bos[].data != NULL) until the kernel reports it done, and the event
++ * handler skips the placeholder. Returns the atom number or -1. */
++static int
++kbase_jm_submit_soft(kbase k, base_jd_core_req req, uint64_t jc,
++                     unsigned dep0, unsigned dep1)
++{
++        struct util_dynarray buf;
++        util_dynarray_init(&buf, NULL);
++        util_dynarray_append(&buf, int32_t, -1);
++
++        pthread_mutex_lock(&k->handle_lock);
++        uint8_t nr = k->atom_number++;
++        struct base_jd_atom_v2 atom = {
++                .jc = jc,
++                .atom_number = nr,
++                .core_req = req,
++                .udata.blob[0] = k->job_seq++,
++        };
++        assert(!k->atom_bos[nr].data);
++        k->atom_bos[nr] = buf;
++        k->jm_atom_seq[nr] = atom.udata.blob[0];
++        pthread_mutex_unlock(&k->handle_lock);
++
++        if (dep0) {
++                atom.pre_dep[0].atom_id = dep0;
++                atom.pre_dep[0].dependency_type = BASE_JD_DEP_TYPE_ORDER;
++        }
++        if (dep1) {
++                atom.pre_dep[1].atom_id = dep1;
++                atom.pre_dep[1].dependency_type = BASE_JD_DEP_TYPE_ORDER;
++        }
++
++#if PAN_BASE_API == 1
++        /* Same MediaTek r38p1 v2-prefix submission as kbase_submit. */
++        struct {
++                struct base_jd_atom_v2 atom;
++                uint64_t vendor_tail;
++        } wire = { .atom = atom };
++        struct kbase_ioctl_job_submit submit = {
++                .nr_atoms = 1,
++                .stride = offsetof(struct base_jd_atom_v2, renderpass_id),
++                .addr = (uintptr_t) &wire,
++        };
++#else
++        struct kbase_ioctl_job_submit submit = {
++                .nr_atoms = 1,
++                .stride = sizeof(atom),
++                .addr = (uintptr_t) &atom,
++        };
++#endif
++        if (kbase_ioctl(k->fd, KBASE_IOCTL_JOB_SUBMIT, &submit) == -1) {
++                perror("ioctl(KBASE_IOCTL_JOB_SUBMIT) soft atom");
++                pthread_mutex_lock(&k->handle_lock);
++                util_dynarray_fini(&k->atom_bos[nr]);
++                pthread_mutex_unlock(&k->handle_lock);
++                return -1;
++        }
++
++        return nr;
++}
++
++/* EGL_ANDROID_native_fence_sync on JM: merge the syncobj's outstanding atoms
++ * pairwise with BASE_JD_REQ_DEP atoms (an atom has only two pre-deps), then
++ * submit a BASE_JD_REQ_SOFT_FENCE_TRIGGER atom after them. The kernel creates
++ * a sync_file for the trigger, writes its fd into the base_fence at jc during
++ * the submit ioctl, and signals it when the trigger atom runs. */
++static int
++kbase_syncobj_export_fd(kbase k, struct kbase_syncobj *o)
++{
++        unsigned pending[255];
++        unsigned n = 0;
++
++        pthread_mutex_lock(&k->jm_submit_lock);
++
++        pthread_mutex_lock(&k->queue_lock);
++        kbase_syncobj_update(k, o);
++        list_for_each_entry(struct kbase_fence, fence, &o->fences, link) {
++                if (n < ARRAY_SIZE(pending))
++                        pending[n++] = fence->slot;
++        }
++        pthread_mutex_unlock(&k->queue_lock);
++
++        /* The merge tree plus the trigger needs at most n atom numbers. If they
++         * would cross the eight-bit wrap, drain first: every pending atom is
++         * then complete, so the fence has no dependencies left. */
++        if (k->atom_number == 0 || (unsigned) k->atom_number + n + 1 > 255) {
++                if (k->job_seq != 0 && !kbase_wait_jm_atoms_idle(k)) {
++                        pthread_mutex_unlock(&k->jm_submit_lock);
++                        return -1;
++                }
++                k->atom_number = 1;
++                n = 0;
++        }
++
++        while (n > 2) {
++                unsigned merged = 0;
++                for (unsigned i = 0; i < n; i += 2) {
++                        if (i + 1 == n) {
++                                pending[merged++] = pending[i];
++                                break;
++                        }
++                        int dep = kbase_jm_submit_soft(k, BASE_JD_REQ_DEP, 0,
++                                                       pending[i], pending[i + 1]);
++                        if (dep < 0) {
++                                pthread_mutex_unlock(&k->jm_submit_lock);
++                                return -1;
++                        }
++                        pending[merged++] = dep;
++                }
++                n = merged;
++        }
++
++        struct base_fence fence = { .basep = { .fd = -1, .stream_fd = -1 } };
++        int nr = kbase_jm_submit_soft(k, BASE_JD_REQ_SOFT_FENCE_TRIGGER,
++                                      (uintptr_t) &fence,
++                                      n > 0 ? pending[0] : 0,
++                                      n > 1 ? pending[1] : 0);
++
++        pthread_mutex_unlock(&k->jm_submit_lock);
++
++        if (getenv("VEGAS_GPU_TRACE"))
++                fprintf(stderr, "[vegas-gpu] fence export atom=%d deps=%u fd=%d\n",
++                        nr, n, fence.basep.fd);
++
++        return nr < 0 ? -1 : fence.basep.fd;
++}
++
++#endif
++
+ static int
+ kbase_submit(kbase k, uint64_t va, unsigned req,
+              struct kbase_syncobj *o,
+@@ -1885,6 +2126,9 @@ kbase_open_csf
+         k->syncobj_destroy = kbase_syncobj_destroy;
+         k->syncobj_dup = kbase_syncobj_dup;
+         k->syncobj_wait = kbase_syncobj_wait;
++#if PAN_BASE_API == 1
++        k->syncobj_export_fd = kbase_syncobj_export_fd;
++#endif
+ 
+         k->callback_all_queues = kbase_callback_all_queues;
+ 

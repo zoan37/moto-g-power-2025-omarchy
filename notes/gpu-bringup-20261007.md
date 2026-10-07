@@ -221,3 +221,33 @@ Grok Bot: built from omarchy-pkgs/pkgbuilds/grok-bot for aarch64 on the laptop
 installed with pacman -U. Needs --no-sandbox (~/.config/grok-bot-flags.conf)
 because CONFIG_USER_NS is off. Renders in software for now (GPU process does
 not use the kbase driver).
+
+## EGL_ANDROID_native_fence_sync on kbase JM (Chrome/Chromium GPU)
+
+Chrome's GPU process loaded the kbase driver but crash-looped on
+eglDupNativeFenceFDANDROID: kbase fence_get_fd was a stub (-1), fence import
+returned NULL and fence_server_sync called a DRM-only path.
+port/vegas/patches/mesa-kbase-native-fence-fd.patch:
+- Export: gather the syncobj's outstanding atoms, merge pairwise with
+  BASE_JD_REQ_DEP atoms (two pre-deps per atom), then submit a
+  BASE_JD_REQ_SOFT_FENCE_TRIGGER atom; the stock module
+  (kbase_sync_fence_out_create) writes a sync_file fd into the base_fence at
+  jc and signals it when the trigger runs. Atom-ID wrap: if the merge tree
+  would cross 255, drain first and drop the (complete) dependencies.
+- Import: keep a dup of the sync_file; fence_finish polls it; fence_server_sync
+  waits on the CPU (no SOFT_FENCE_WAIT plumbing into JM submits yet).
+bringup/gpu-fence-probe.c: 600/600 iterations (dup fd, signal ~1.1 ms,
+re-import + eglWaitSyncKHR + eglClientWaitSyncKHR) across atom-ID wraps.
+Installed as the system driver (sha256 def2b82f...; previous build kept in
+lib/dri-jmdefer-backup); Hyprland latency unchanged (8 ms / 17 ms), 0 faults.
+
+Chrome 155 then runs fully on the Mali: chrome://gpu shows compositing,
+rasterization, canvas, WebGL and WebGPU hardware accelerated; renderer
+"ANGLE (Panfrost, Mali-G57 (Panfrost), OpenGL ES 3.1 Mesa 23.0.0-devel)".
+scripts/bench (CDP over stdlib websocket): scroll fps on Wikipedia, 3 runs:
+software 71, GPU-composite-only 72, all-GPU 65 (rAF/main-thread bound);
+2D canvas 2000 arcs/frame: software 27, all-GPU 9, composite-only 24.
+So Chrome stays on software by default; ~/.config/vegas/chrome-gpu opts into
+ANGLE/GLES compositing with CPU raster (google-chrome-stable launcher).
+Canvas slowness on GPU raster looks like BO allocation churn (clear_page,
+dcache clean, TLB flushes in the GPU process profile), not fence waits.

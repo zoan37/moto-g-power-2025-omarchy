@@ -49,8 +49,8 @@ def axis(code):
     data=fcntl.ioctl(fd,(2<<30)|(24<<16)|(ord('E')<<8)|(0x40+code),bytes(24))
     return struct.unpack("iiiiii",data)[1:3]
 ax,ay=axis(53),axis(54)
-x=ax[0]+(ax[1]-ax[0])*1000//10000
-y=ay[0]+(ay[1]-ay[0])*8380//10000
+x=ax[0]+int((ax[1]-ax[0])*float(sys.argv[3]))
+y=ay[0]+int((ay[1]-ay[0])*float(sys.argv[4]))
 def emit(t,c,v): os.write(fd,struct.pack("llHHi",0,0,t,c,v))
 with open(p/"injected.jsonl","w",buffering=1) as log:
     for n in range(1,13):
@@ -84,8 +84,14 @@ def main():
     layers = json.loads(command(hc + ' -j layers\n').split('NATIVE_COMMAND_STATUS:')[0])
     keyboard = [x for m in layers.values() for level in m['levels'].values()
                 for x in level if x['namespace'] == 'wvkbd']
-    assert len(keyboard) == 1 and all(keyboard[0][k] == v for k, v in
-        {'x': 0, 'y': 1110, 'w': 720, 'h': 450}.items()), 'Phone keyboard geometry changed'
+    assert len(keyboard) == 1, 'Phone keyboard is not showing'
+    kb = keyboard[0]
+    monitor = json.loads(command(hc + ' -j monitors\n').split('NATIVE_COMMAND_STATUS:')[0])[0]
+    logical_w = monitor['width'] / monitor['scale']
+    logical_h = monitor['height'] / monitor['scale']
+    # "a" sits ~10% across the keyboard, in the middle (third) of its five rows.
+    tap_x = (kb['x'] + kb['w'] * 0.10) / logical_w
+    tap_y = (kb['y'] + kb['h'] * 0.498) / logical_h
     script = 'mkdir -p /run/user/1000/vegas-latency\nrm -f /run/user/1000/vegas-latency/ready\n'
     for name, content in [('client.py', CLIENT), ('inject.py', INJECT)]:
         script += f"printf '%s' '{base64.b64encode(content.encode()).decode()}' | base64 -d >/run/user/1000/vegas-latency/{name}\n"
@@ -94,7 +100,7 @@ def main():
     script += hc + " dispatch 'hl.dsp.exec_cmd([=[" + launch + "]=])'\n"
     script += 'for i in {1..50}; do test -f /run/user/1000/vegas-latency/ready && break; sleep .1; done\ntest -f /run/user/1000/vegas-latency/ready\n'
     command(script)
-    command(f'python /run/user/1000/vegas-latency/inject.py {args.hold_ms/1000} {(args.interval_ms-args.hold_ms)/1000}\n')
+    command(f'python /run/user/1000/vegas-latency/inject.py {args.hold_ms/1000} {(args.interval_ms-args.hold_ms)/1000} {tap_x:.4f} {tap_y:.4f}\n')
     result = command('echo INJECT_BEGIN\ncat /run/user/1000/vegas-latency/injected.jsonl\necho RECEIVE_BEGIN\ncat /run/user/1000/vegas-latency/received.jsonl\necho WAYLAND_BEGIN\ncat /run/user/1000/vegas-latency/wayland.log\n')
     out = ROOT / 'private/linux-bringup/phone-polish-20261007'
     out.mkdir(parents=True, exist_ok=True)

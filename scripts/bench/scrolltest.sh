@@ -1,0 +1,3 @@
+# usage: scrolltest.sh  -> navigates the CDP page to a long article and reports scroll fps
+python3 /tmp/cdp.py Page.navigate '{"url":"https://en.wikipedia.org/wiki/Linux"}' page >/dev/null; sleep 9
+python3 /tmp/cdp.py Runtime.evaluate '{"awaitPromise":true,"returnByValue":true,"expression":"new Promise(r=>{let f=0,t0=performance.now(),long=0,last=t0;function step(t){f++; if(t-last>50) long++; last=t; window.scrollBy(0,25); if(t-t0<4000) requestAnimationFrame(step); else r({fps:Math.round(f*1000/(t-t0)), janky_frames_over_50ms:long, y:Math.round(scrollY)});} requestAnimationFrame(step);})"}' page

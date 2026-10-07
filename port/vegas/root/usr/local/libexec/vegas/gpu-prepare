@@ -10,7 +10,7 @@ modules=/opt/vegas-gpu/stock-modules
 prefix=/opt/vegas-gpu/mesa-kbase
 cd "$modules"
 sha256sum --quiet -c SHA256SUMS
-[[ $(sha256sum "$prefix/lib/dri/panfrost_kbase_dri.so" | cut -d' ' -f1) == 69652ad13a5c72809ad9a7acb7e5f2522bc4a19fca6395b91f0f4e87b47417ad ]]
+[[ $(sha256sum "$prefix/lib/dri/panfrost_kbase_dri.so" | cut -d' ' -f1) == def2b82f52b5ef352f2a6891c2954437645bf2245edc81eca89e1cd44fcadc7b ]]
 token=$(mktemp /run/vegas-gpu-watchdog.XXXXXX)
 (sleep 90; [[ -f $token ]] && /usr/local/libexec/vegas/power-transition reboot) &
 watchdog=$!
