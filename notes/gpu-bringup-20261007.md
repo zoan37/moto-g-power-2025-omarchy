@@ -251,3 +251,24 @@ So Chrome stays on software by default; ~/.config/vegas/chrome-gpu opts into
 ANGLE/GLES compositing with CPU raster (google-chrome-stable launcher).
 Canvas slowness on GPU raster looks like BO allocation churn (clear_page,
 dcache clean, TLB flushes in the GPU process profile), not fence waits.
+
+## Chrome typing latency and ARM's own Mali driver (2026-10-07 evening)
+
+Event Timing (keydown -> next paint) in a test page, 12 taps through the real
+Ilitek -> wvkbd path (only presses >= 16 ms are reported): software ~16 ms
+median (7/12 reported), GPU-composite 10/12 under 16 ms with spikes of 48-64,
+all-GPU 6 spikes 40-96 ms. In-page typing is fine; the slow-feeling address
+bar is Chrome 155's WebUI omnibox popup (a separate renderer,
+chrome://omnibox-popup.top-chrome/) re-rendering per keystroke. Feature
+switch to the native popup not yet identified.
+
+ARM's glibc libmali: Ubuntu's Genio PPA (~asaly12/mtk-mali) ships r48p0 for
+MT8188/MT8195 (Mali-G57; same valhall-1691526.wa as this phone's vendor
+firmware). On the phone the UK/API handshake with the stock r38p1 kbase
+passes, then the DDK refuses: "built for 0x9000001 ... /dev/mali0 detected
+as 0x9000903". Linux builds target a different G57 product variant; the
+MT6835's variant only has its Android (bionic) build. The licence forbids
+reverse engineering/disassembly, so the check is not patched. Remaining
+routes: libhybris with the phone's own Android r38p1 libGLES_mali (exact
+match; Android 16 bionic is a hurdle), or move the kbase backend onto
+current Mesa Panfrost. Test copies left in /opt/vegas-gpu/libmali-r48*.
