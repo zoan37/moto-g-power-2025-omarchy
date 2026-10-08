@@ -1,0 +1,5 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+AlwaysBreakAfterDefinitionReturnType: All
+BreakBeforeBraces: Linux
+SortIncludes: false

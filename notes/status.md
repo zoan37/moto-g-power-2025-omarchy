@@ -1,3 +1,21 @@
+# Current result — 2026-10-07
+
+Native Omarchy runs on the Moto G Power 2025 XT2515-1 / vegas from microSD.
+Hyprland uses patched Mesa/Kbase GPU acceleration and direct KMS at 120 Hz.
+Measured terminal frame callbacks are 13–16 ms, versus roughly 114 ms on the
+initial software path. Physical typing, the phone-sized keyboard, bar safe
+insets, Wi-Fi/HTTPS, native reboot and one unplugged shutdown cycle are verified.
+
+An isolated ARM r48 libmali workaround also passes rendering and fence tests
+and runs a separate GPU-accelerated Chrome profile. It remains experimental;
+Chrome's regular default stays software because it wins the measured canvas
+workload. Hardware video decode, cellular, audio and suspend are not established.
+See [GPU measurements and implementation](gpu-bringup-20261007.md) and
+[native setup/recovery](native-omarchy-20261006.md).
+
+The entries below are historical checkpoints, including earlier failures and
+execution-environment restrictions that no longer describe the current setup.
+
 # Native Omarchy phone UI update — 2026-10-07
 
 The Moto G Power 2025 XT2515-1 boots native Arch Linux ARM from microSD with

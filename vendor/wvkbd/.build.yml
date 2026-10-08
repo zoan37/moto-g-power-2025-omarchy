@@ -1,0 +1,19 @@
+arch: x86_64
+image: alpine/edge
+packages:
+  - fontconfig 
+  - wayland-dev 
+  - libxkbcommon-dev
+  - pango-dev
+  - scdoc
+  - clang22-extra-tools # needed for formatting
+sources:
+  - https://git.sr.ht/~proycon/wvkbd
+triggers:
+  - action: email
+    condition: failure
+    to: "~mil/sxmo-devel@lists.sr.ht"
+tasks:
+  - build: |
+      cd wvkbd
+      make

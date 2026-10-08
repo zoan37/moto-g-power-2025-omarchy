@@ -8,6 +8,8 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
+#include <gbm.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,9 +27,20 @@ static double now_ms(void)
 int main(int argc, char **argv)
 {
    int iterations = argc > 1 ? atoi(argv[1]) : 300;
+   if (iterations < 1 || iterations > 2000) return 2;
    PFNEGLGETPLATFORMDISPLAYEXTPROC get_display =
       (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
-   EGLDisplay d = get_display(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
+   if (!get_display) return 1;
+   int drm_fd = -1;
+   struct gbm_device *gbm = NULL;
+   EGLDisplay d;
+   if (getenv("VEGAS_PROBE_GBM")) {
+      drm_fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+      if (drm_fd < 0 || !(gbm = gbm_create_device(drm_fd))) return 1;
+      d = get_display(EGL_PLATFORM_GBM_KHR, gbm, NULL);
+   } else {
+      d = get_display(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
+   }
    EGLint maj, min;
    if (!eglInitialize(d, &maj, &min) || !eglBindAPI(EGL_OPENGL_ES_API)) return 1;
    const char *exts = eglQueryString(d, EGL_EXTENSIONS);
@@ -93,5 +106,12 @@ int main(int argc, char **argv)
    }
    printf("%s: %d iterations, avg fence signal wait %.2f ms\n",
           fails ? "FAIL" : "PASS", iterations, signal_ms / iterations);
+   glDeleteFramebuffers(1, &fb);
+   glDeleteTextures(1, &tex);
+   eglMakeCurrent(d, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+   eglDestroyContext(d, ctx);
+   eglTerminate(d);
+   if (gbm) gbm_device_destroy(gbm);
+   if (drm_fd >= 0) close(drm_fd);
    return fails ? 1 : 0;
 }

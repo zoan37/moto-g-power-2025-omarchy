@@ -10,5 +10,25 @@
   "val-protocol": {
     "url": "https://github.com/Maikyxd/val-protocol",
     "commit": "dc7f41f9b1a32da1a78ef327bb62d2bef17d7bd0"
+  },
+  "omarchy-android": {
+    "url": "https://github.com/BlackFireAlex/omarchy-android.git",
+    "commit": "4f2944d6ee4de22af78f21627285a57ff1a3ee42"
+  },
+  "aquamarine": {
+    "url": "https://github.com/hyprwm/aquamarine.git",
+    "commit": "a79fb21b2e2a82dd061a6d071802bcf38bd5c383"
+  },
+  "mesa-kbase-tensor": {
+    "url": "https://github.com/RandomCoderOrg/mesa-gfxstream.git",
+    "commit": "4a03b179a986578d2c6685299ea9e7ae8fa387ec"
+  },
+  "wmt-pyloader": {
+    "url": "https://github.com/Muzuwi/wmt-pyloader.git",
+    "commit": "88506be03486424178189f7a255fcd62b39dc8b0"
+  },
+  "wvkbd": {
+    "url": "https://github.com/jjsullivan5196/wvkbd.git",
+    "commit": "e14b53aff4fd1f471add6b21b3885c2cff945509"
   }
 }

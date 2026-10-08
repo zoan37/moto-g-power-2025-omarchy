@@ -10,7 +10,7 @@ import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE = ROOT / 'third_party/wvkbd'
+SOURCE = ROOT / 'vendor/wvkbd'
 BUILD = ROOT / 'artifacts/vegas-linux-bringup/phone-keyboard'
 SYSROOT = ROOT.parent / 'fire-hd8-omarchy/working/desktop/rootfs'
 EXPECTED = {

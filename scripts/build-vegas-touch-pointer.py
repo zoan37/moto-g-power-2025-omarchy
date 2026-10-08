@@ -7,13 +7,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / 'artifacts/vegas-linux-bringup/touch-pointer'
 SYSROOT = ROOT.parent / 'fire-hd8-omarchy/working/desktop/rootfs'
-XML = BUILD / 'virtual-pointer.xml'
+XML = ROOT / 'vendor/protocols/wlr-virtual-pointer-unstable-v1.xml'
 EXPECTED = '3ff6d540be0bc5228195bf072bde42117ea17945a5c2061add5d3cf97d6bb524'
 
 
 def main():
     if hashlib.sha256(XML.read_bytes()).hexdigest() != EXPECTED:
         raise SystemExit('Reviewed virtual-pointer protocol changed')
+    BUILD.mkdir(parents=True, exist_ok=True)
     header = BUILD / 'virtual-pointer-client.h'
     protocol = BUILD / 'virtual-pointer-client.c'
     subprocess.run(['wayland-scanner', 'client-header', str(XML), str(header)], check=True)

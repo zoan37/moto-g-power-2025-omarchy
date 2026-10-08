@@ -14,10 +14,13 @@
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
+#include <gbm.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 static GLuint shader(GLenum type, const char *source)
 {
@@ -105,13 +108,25 @@ int main(int argc, char **argv)
       return 2;
    }
    int W = atoi(argv[1]), H = atoi(argv[2]), frames = atoi(argv[3]);
+   if (W < 96 || H < 96 || W > 1080 || H > 2388 || frames < 1 || frames > 2000)
+      return 2;
    const char *f = argc > 4 ? argv[4] : "";
    int ds = !!strchr(f, 's'), blend = !!strchr(f, 'b'), scis = !!strchr(f, 'c');
    int upload = !!strchr(f, 't'), copy = !!strchr(f, 'o'), outside = !!strchr(f, 'x');
 
    PFNEGLGETPLATFORMDISPLAYEXTPROC get_display =
       (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
-   EGLDisplay d = get_display(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
+   if (!get_display) return 1;
+   int drm_fd = -1;
+   struct gbm_device *gbm = NULL;
+   EGLDisplay d;
+   if (getenv("VEGAS_PROBE_GBM")) {
+      drm_fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+      if (drm_fd < 0 || !(gbm = gbm_create_device(drm_fd))) return 1;
+      d = get_display(EGL_PLATFORM_GBM_KHR, gbm, NULL);
+   } else {
+      d = get_display(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
+   }
    EGLint maj, min;
    const EGLint ver[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
    if (!eglInitialize(d, &maj, &min) || !eglBindAPI(EGL_OPENGL_ES_API)) return 1;
@@ -221,5 +236,11 @@ int main(int argc, char **argv)
    clock_gettime(CLOCK_MONOTONIC, &t1);
    double s = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) * 1e-9;
    printf("%s: %d frames %.1f ms/frame\n", fails ? "FAIL" : "PASS", frames, s * 1000 / frames);
+   free(pix);
+   eglMakeCurrent(d, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+   eglDestroyContext(d, ctx);
+   eglTerminate(d);
+   if (gbm) gbm_device_destroy(gbm);
+   if (drm_fd >= 0) close(drm_fd);
    return fails ? 1 : 0;
 }

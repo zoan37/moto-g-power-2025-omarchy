@@ -1,8 +1,10 @@
 # Native Mali GPU investigation — 2026-10-07
 
-The Moto G Power 2025 XT2515-1 (vegas, MT6835 / Dimensity 6300) continues to
-run native Arch ARM and Omarchy. The working desktop renders with llvmpipe.
-GPU kernel access is verified; GPU-rendered pixels are not yet verified.
+The Moto G Power 2025 XT2515-1 (vegas, MT6835 / Dimensity 6300) runs native
+Arch ARM and Omarchy with patched Mesa/Kbase GPU acceleration and direct
+120 Hz KMS scanout. An isolated ARM r48 libmali compatibility trial also
+renders successfully; see the final section. The dated experiments below
+preserve intermediate failures and their fixes.
 
 ## Hardware and kernel access
 
@@ -262,13 +264,121 @@ bar is Chrome 155's WebUI omnibox popup (a separate renderer,
 chrome://omnibox-popup.top-chrome/) re-rendering per keystroke. Feature
 switch to the native popup not yet identified.
 
-ARM's glibc libmali: Ubuntu's Genio PPA (~asaly12/mtk-mali) ships r48p0 for
+Initial ARM glibc libmali investigation: Ubuntu's Genio PPA (~asaly12/mtk-mali) ships r48p0 for
 MT8188/MT8195 (Mali-G57; same valhall-1691526.wa as this phone's vendor
 firmware). On the phone the UK/API handshake with the stock r38p1 kbase
 passes, then the DDK refuses: "built for 0x9000001 ... /dev/mali0 detected
 as 0x9000903". Linux builds target a different G57 product variant; the
-MT6835's variant only has its Android (bionic) build. The licence forbids
-reverse engineering/disassembly, so the check is not patched. Remaining
+MT6835's variant only has its Android (bionic) build. At this stage the
+product check was left unmodified. Other candidate
 routes: libhybris with the phone's own Android r38p1 libGLES_mali (exact
 match; Android 16 bionic is a hurdle), or move the kbase backend onto
 current Mesa Panfrost. Test copies left in /opt/vegas-gpu/libmali-r48*.
+
+## Isolated ARM r48 compatibility trial (2026-10-07, Codex)
+
+**Working rendering workaround, experimental.** The earlier product rejection
+is resolved in an isolated copy. The normal Mesa/Hyprland driver and Chrome
+default have not been replaced. No boot-image changes or reboot were needed.
+
+Three independent mismatches had to be addressed:
+
+1. The compatibility function compares a normalized product, not the raw GPU
+   ID shown in the diagnostic. The phone's raw `0x09000903` becomes
+   `0x09000003`; this build expects `0x09000001`. At file offset `0x171a444`,
+   `MOV w1,#1` (`0x52800021`) becomes `MOV w1,#3` (`0x52800061`). The
+   architecture, revision, and status comparisons are retained. Patching
+   the immediate to `0x903` was an initial failed experiment.
+2. GBM's DMA heap allocator needs O_RDWR access to `/dev/dma_heap/system`.
+   The existing root:root 0644 mode prevents initialization as `omarchy`.
+   Trials temporarily use root:video 0660, restoring the previous ownership
+   and mode on exit. No protected/secure heap permissions were changed.
+3. r48 submits 64-byte **V3** JM atom records, but Motorola's kernel identifies
+   64-byte records as **V2**. It therefore misreads the fields and rejects
+   submission with EINVAL (`Bad padding byte 3: 9`), followed by a libmali
+   abort. `bringup/libmali-jm-compat.c` preserves each V3 atom's 64 bytes and
+   appends eight zero bytes, selecting the kernel's 72-byte V3 layout.
+   The vendor flush-ID tail remains zero. The shim requires the explicit
+   `VEGAS_LIBMALI_JM_COMPAT=stride72` setting, checks the `/dev/mali0` fd,
+   and validates the count/stride/padding. It is preloaded only in the trial.
+
+Exact vendor blob SHA256:
+
+- Original: `d3a44c6c5b897ec5d0b756670cb0f3af2af42f12cd8dba67091e3dce9e36868f`
+- Patched: `bdf616f77db6ddeb3954e8a9117fe83dda3f6188cf4df3eda9bda19b4f81f40c`
+
+The name table still emits `Unknown Product ID` and GL_RENDERER `UNKNOWN`;
+EGL identifies ARM and GLES reports `3.2 v1.r48p0`. The name table was not
+patched. Successful tests do not establish compatibility for all GPU features.
+The missing `large_page_conf` parameter warning also remains.
+
+Validation on the physical phone:
+
+- GBM and Wayland EGL 1.5 / GLES 3.2 initialization succeed.
+- Clear/readback, shader compilation, shader draw/readback, and cleanup pass.
+- The freshly rebuilt package passes 2,000 shader frames, 2,000 frames at
+  1080×2388 with textures/blending/scissors/depth/stencil/FBO copying, and
+  2,000 native-fence export/import/client/server wait cycles. Full-resolution
+  probe: 5.7 ms/frame; fence wait: 0.65 ms average. These are off-screen
+  workloads, not measured display or typing latency.
+- A separate Chrome 155 profile runs with ARM ANGLE/GLES and reports GPU
+  compositing, rasterization, canvas and WebGL enabled. Chrome's feature
+  status is not proof that video acceleration or WebGPU actually work.
+  Standard sandbox flags were retained; no sandbox-disabling flags were used.
+- Matching 4-second 2D canvas trials (2,000 arcs per frame), with the same
+  1040×1262 canvas, produced:
+
+| Rendering path | Three runs, FPS |
+| --- | --- |
+| ARM r48 compatibility trial | 22, 22, 22 |
+| ARM GPU compositing, CPU raster/canvas | 25, 25, 25 |
+| Existing Mesa kbase GPU | 9, 9, 8 |
+| Existing software rendering | 30, 31, 31 |
+
+ARM is about 2.4× faster than the existing Mesa GPU path in this workload,
+but software still wins this test. Chrome stays on its existing software
+default. This experiment does not resolve or measure omnibox typing latency.
+
+### Reproduce without replacing the desktop driver
+
+`scripts/prepare-vegas-libmali-trial.py` takes the existing unmodified vendor
+binary, requires its exact SHA and instruction, and builds a separate package
+with the adapter and three probes. It neither downloads nor redistributes the
+vendor binary. Cross compiler, sysroot and EGL/GLES/GBM headers can be supplied
+through the documented CLI arguments (`--help`). Default paths match this
+workspace's already staged ARM toolchain and SDK.
+
+```bash
+python3 scripts/prepare-vegas-libmali-trial.py /path/to/original/libmali.so.0.48.0 \
+  --out artifacts/vegas-linux-bringup/libmali-new-trial
+```
+
+Copy that package to a separate prefix on this exact native phone and run
+`bash PREFIX/run-probes.sh 300` as root. It validates file hashes and symlinks,
+checks hostname/rootfs/kernel, takes a trial lock, suppresses core dumps, and
+limits the unprivileged probe sequence to 60 seconds. It restores heap
+permissions on ordinary exit, error, INT or TERM. SIGKILL/power loss cannot
+execute shell cleanup; a reboot recreates the device with its usual mode.
+Do not run it concurrently with older scratch trials, which do not share its
+lock. Do not preload the adapter globally or into the existing compositor.
+
+Installed, validated package on this phone:
+`/opt/vegas-gpu/libmali-trials/reproducible-v3`.
+The earlier Chrome trial and debugging fixtures remain in
+`/opt/vegas-gpu/libmali-trials/normalized-product-bdf616f77db6ddeb`.
+All test browser instances closed after their bounded sessions. Normal
+Hyprland PID 1991 remained alive throughout; configerrors were empty, heap
+mode returned to root:root 0644, battery temperature was 30°C, and no new
+Mali fault/reset lines appeared in the final kernel-log check. The default
+Mesa driver still hashes to
+`def2b82f52b5ef352f2a6891c2954437645bf2245edc81eca89e1cd44fcadc7b`.
+
+Raw trial evidence is kept under the ignored/private directory
+`private/linux-bringup/libmali-compat-20261007/`, including
+`reproducible-2000.log`, the matched Chrome logs, and `final-health.log`.
+CPU raster/canvas with ARM compositing also works (verified feature status)
+and improves on full GPU raster in this test, but remains below the software
+default. Follow-up work should measure real UI latency and DMA-BUF
+scanout/import compatibility before attempting any
+compositor replacement. Current successful off-screen/Wayland client tests
+are not a direct-KMS compositor compatibility test.

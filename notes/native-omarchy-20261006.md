@@ -7,7 +7,15 @@ guard are configured. The 2026-10-07 phone UI update is installed and its larger
 keyboard and bar safe insets pass native/live webcam checks. Cable-aware shutdown
 and normal power-on passed one full cycle; see [the update record](phone-polish-20261007.md).
 
-## Verified on the phone
+## Current graphics update — 2026-10-07
+
+The running desktop now uses patched Mesa/Kbase and direct KMS Hyprland at
+120 Hz, with a phone UI scale of 2.4. Wi-Fi works through the stock MediaTek
+modules and a native WMT loader. The initial Weston/llvmpipe measurements
+below describe the first successful desktop, not the current GPU path.
+See [GPU bring-up](gpu-bringup-20261007.md) for driver prerequisites and tests.
+
+## First desktop verified on the phone
 
 - All 58 desktop archive stages copied; all 69,374 final regular-file hashes
   matched before applying user overrides and performing first-boot setup.

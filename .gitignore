@@ -13,3 +13,16 @@ vm/
 *.zip
 *.tar*
 *.log
+*.pyc
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.nmconnection
+wpa_supplicant.conf
+*.deb
+*.so
+*.so.*
+*.ko

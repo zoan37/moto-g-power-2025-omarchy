@@ -1,74 +1,106 @@
-# Moto G Power 2025 native Omarchy
+# Omarchy on Moto G Power 2025
 
-The owned Motorola XT2515-1 (vegas) now boots Arch Linux ARM from its microSD
-and runs the real Omarchy ARM desktop with Hyprland, Quickshell, Foot and an
-on-screen keyboard. Persistent boot and a user-requested reboot back into
-Linux are verified. The [phone UI and shutdown update](notes/phone-polish-20261007.md)
-is installed: larger five-row keys, bar safe insets and clean live config checks
-pass on the phone. One shutdown with USB disconnected, a minute staying off,
-and normal power-on back into Omarchy passed; saved power logs confirm it.
+Native Arch Linux ARM and Omarchy on the **Motorola Moto G Power 2025,
+XT2515-1 / vegas**: MediaTek Dimensity 6300 (MT6835), Mali-G57 MC2, and a
+1080 × 2388 portrait display.
 
-The directory retains its earlier 2026 name; the actual target is the 2025.
+Linux boots from microSD using the phone's stock Motorola kernel. Hyprland
+drives the display directly at 120 Hz with GPU acceleration through a patched
+Mesa/Kbase driver. This is native Linux, with no Android userspace or PRoot.
 
-## Working setup
+This repository contains the port's source, configuration, patches, and
+hardware test records. It is an experimental device port, not a finished
+installer or a general guide for other Motorola models. The actual target is
+the **2025** phone; older research mentions 2026 before its identity was corrected.
 
-See [native Omarchy use and Android recovery](notes/native-omarchy-20261006.md)
-for the current image, exact checksums, architecture, USB access and limits.
-[Status](notes/status.md) leads with the current result; older entries are
-historical. [Bring-up notes](notes/linux-bringup-20261006.md) record experiments.
+## Hardware status
 
-Verified on this phone:
+| Component | Verified result |
+| --- | --- |
+| Boot/storage | Persistent native boot from ext4 microSD; reboot back into Linux |
+| Display/GPU | Direct DRM/KMS Hyprland at 1080 × 2388 / 120 Hz; patched Mesa on Mali-G57 |
+| Desktop | Omarchy/Quickshell, Foot terminal, phone bar, app/workspace controls |
+| Touch/keyboard | Physical tapping and typing; five-row keyboard; corner/camera safe insets |
+| Wi-Fi | Stock MediaTek modules with wmt-pyloader, wpa_supplicant and dhcpcd; HTTPS verified |
+| Browser | Chrome ARM64 runs; software default; separate GPU trials work |
+| Power | Native reboot; one full shutdown/power-on cycle with USB disconnected |
+| Recovery | Exact stock Android init_boot restoration and Android boot verified |
+| Audio/cellular/suspend | Not established |
+| Battery | Temperature guard active; charge percentage and sustained charging not established |
 
-- All 58 desktop transfer stages and 69,374 payload file hashes.
-- Native Arch PID 1 and the ext4 microSD root, with a 1080×2388 DRM display.
-- Omarchy bar/background, Foot, on-screen keyboard and clean live Hyprland config.
-- Synthetic Ilitek input clicking a keyboard key and typing into Foot.
-- The Keys button hiding and restoring the keyboard through that same input path.
-- Virtual keyboard input executing a command in the terminal.
-- Persistent boot beyond the test deadline and a normal user reboot into Linux.
-- Exact stock Android recovery through fastboot after the corrected desktop test.
+The stock kernel needs a custom Bash PID 1 supervisor rather than a normal
+systemd boot. General Omarchy service operations still need porting. Shutdown
+requires disconnecting USB/chargers. Browser video can lag; hardware video
+decoding is not established.
 
-The stock kernel requires a custom Bash boot supervisor. Graphics use software
-rendering. The user confirmed physical typing. Fast typing, radios/audio, suspend, reliable battery
-percentage and sustained charging remain unverified. The 40 C temperature
-guard remains active; 29–30 C was observed during the verified runs.
+## GPU work
 
-## Reproduce a native boot from recovered Android
+The daily desktop uses the patched open-source Mesa/Kbase path. Measured
+Foot commit-to-frame callback latency fell from roughly 114 ms on the initial
+software desktop to 13–16 ms on direct GPU/KMS. Frame callbacks measure the
+software presentation path, not physical panel illumination.
 
-The microSD must contain the verified desktop and phone overrides. From this
-directory, with the original W1VES36H.10-12-1 Android build in slot B and USB
-debugging connected:
+An isolated ARM r48 libmali experiment also renders on this phone, using a
+hash-locked product-check patch and a process-local JM job-format adapter.
+It passed 2,000 iterations each of shader rendering, full-resolution rendering,
+and native-fence synchronization. Matching Chrome canvas trials produced
+22 FPS with ARM GPU raster, 8–9 FPS with Mesa GPU raster, and 30–31 FPS with
+software. ARM compositing with CPU raster reached 25 FPS. Chrome therefore
+keeps its existing software default. The proprietary library is not included.
+
+See [GPU implementation and measurements](notes/gpu-bringup-20261007.md).
+
+## Start here
+
+- [Current status and historical checkpoints](notes/status.md)
+- [Native boot, USB access, and stock Android recovery](notes/native-omarchy-20261006.md)
+- [Phone UI and cable-aware shutdown](notes/phone-polish-20261007.md)
+- [Hardware research and model identification](notes/power-2025.md)
+- [Valhalla unlock experiment](notes/valhalla-20261006.md)
+
+The instructions record a tested device with an unlocked bootloader and the
+original `W1VES36H.10-12-1` Android build in slot B. They depend on locally
+prepared firmware, stock modules, a microSD rootfs, and build artifacts.
+Those inputs are deliberately excluded from Git. A fresh clone alone cannot
+flash a complete installation. Preserve matching stock firmware and
+device-specific backups before any boot-chain or storage writes.
+
+The original desktop builder/test commands, after preparing those prerequisites,
+are:
 
 ```bash
 python scripts/build-vegas-diagnostic.py --desktop
-python scripts/try-vegas-diagnostic.py --usb-network --native-desktop --webcam-ser8
+python scripts/try-vegas-diagnostic.py --usb-network --native-desktop
 ```
 
-The bounded test restores stock init_boot_b when it finishes. Add
---keep-desktop only when a checked desktop should remain running. The runner
-checks the phone model, exact build, slot, unlocked state and image hashes.
-The preserved working image and manifest are under ignored
-artifacts/vegas-linux-bringup/native-desktop/.
+The bounded test restores stock `init_boot_b` when it finishes. The explicit
+`--keep-desktop` option retains a verified desktop. Read the recovery and
+bring-up notes before using either; the runner checks model, build, slot,
+unlocked state and image hashes. GPU mode additionally needs the verified
+driver/module package described in the GPU notes; it is not implied by these
+two bootstrap commands.
 
-Linux recovery replaces only init_boot_b with the preserved matching stock
-image. The Valhalla LK and unlocked bootloader stay in place. Use the exact
-[recovery instructions](notes/native-omarchy-20261006.md#return-to-stock-android).
+The USB diagnostics endpoint accepts root commands on a dedicated
+`192.168.77.1:8080` point-to-point link without authentication. Keep it on that
+trusted development link; do not forward it or bind it to Wi-Fi.
 
-## Source and history
+## Repository layout
 
-Phone overrides are in port/vegas/root; diagnostic/bootstrap code is in
-bringup/ and scripts/. The desktop payload is the pinned
-[omarchy-android ARM port](https://github.com/BlackFireAlex/omarchy-android).
-Host desktop configuration was not changed.
+- `port/vegas/root/`: phone filesystem overrides and native startup helpers.
+- `port/vegas/patches/`: Aquamarine and Mesa compatibility patches.
+- `bringup/`: diagnostic ramdisk helpers, graphics/input probes and JM adapter.
+- `scripts/`: guarded preparation, build, transfer and test tools.
+- `vendor/wvkbd/`: matching GPL keyboard source, including immediate-feedback changes.
+- `vendor/protocols/`: the pointer protocol needed to rebuild the input helpers.
+- `notes/`: measurements, implementation details and chronological research.
+- `notes/upstream-revisions.json`: upstream source locations and pinned revisions.
 
-[Valhalla unlock](notes/valhalla-20261006.md),
-[model/source research](notes/power-2025.md),
-[original Claude handoff](notes/handoff.md), and
-[Arch ARM VM preparation](notes/arm-vm.md) preserve earlier work.
+Several cross-builders use the sibling Fire HD workspace's staged ARM sysroot;
+they need that SDK or adjustment to the documented build paths. Third-party
+desktop, firmware and toolchain payloads are fetched/prepared separately.
 
-## Local data
+Private transcripts, device identifiers, unlock keys, Wi-Fi credentials,
+firmware, backups, proprietary libmali, and generated images stay outside Git.
+Do not attach them to issues. See [license and upstream attribution](THIRD_PARTY.md).
 
-private/, firmware/, backups/, artifacts/, vm/, .venv/ and third_party/ are
-ignored by Git. Surveys and images can contain device identities; keep those
-local. Matching firmware and 17 verified unique/boot partition readbacks are
-preserved. This repository has no remote and no new commit was created.
+Related experiment: [Omarchy on Fire HD 8 (2016)](https://github.com/zoan37/fire-hd8-omarchy).

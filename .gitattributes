@@ -1,0 +1,2 @@
+# Preserve reviewed upstream source byte-for-byte, including its whitespace.
+vendor/wvkbd/** -whitespace
