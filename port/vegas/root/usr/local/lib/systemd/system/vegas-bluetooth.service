@@ -1,0 +1,16 @@
+# Bluetooth: vendor BT driver + hci_vhci + vegas-bt-bridge (/dev/stpbt <-> hci0)
+# for BlueZ; see /usr/local/libexec/vegas/bluetooth-up.
+[Unit]
+Description=MediaTek Bluetooth for BlueZ (stpbt to vhci bridge)
+After=local-fs.target vegas-wifi.service
+Wants=bluetooth.service
+
+[Service]
+ExecStart=/usr/local/libexec/vegas/bluetooth-up
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/vegas/bluetooth.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+#!/bin/bash
+# Bluetooth (vegas-bluetooth.service): MediaTek's BT driver over WMT plus our
+# hci_vhci build, then vegas-bt-bridge gives BlueZ an hci0
+# (notes/bluetooth-20261011.md). Runs after Wi-Fi, which loads the WMT stack and
+# the combo chip's firmware. Opt out with /var/lib/vegas/no-bluetooth.
+set -u
+modules=/opt/vegas-bluetooth/modules
+[[ -e /var/lib/vegas/no-bluetooth ]] && { echo 'bluetooth disabled by no-bluetooth'; exit 0; }
+for _ in $(seq 1 120); do
+  [[ -d /sys/module/wmt_drv && -e /sys/class/net/wlan0 ]] && break
+  sleep 1
+done
+[[ -d /sys/module/wmt_drv ]] || { echo 'WMT (Wi-Fi) not up after 120 s'; exit 1; }
+for m in hci_vhci bt_drv_connac1x; do
+  [[ -d /sys/module/$m ]] && continue
+  timeout -k 2 15 insmod "$modules/$m.ko" || { echo "insmod $m failed"; exit 1; }
+done
+for _ in $(seq 1 20); do [[ -c /dev/stpbt ]] && break; sleep 0.5; done
+[[ -c /dev/stpbt ]] || { echo 'no /dev/stpbt'; exit 1; }
+exec /usr/local/sbin/vegas-bt-bridge

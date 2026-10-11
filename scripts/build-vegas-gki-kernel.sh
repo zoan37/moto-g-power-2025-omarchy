@@ -7,6 +7,9 @@
 #   stock  gki_defconfig + KMI trimming, as Google's build/build.sh does it
 #   tier1  stock + DEVTMPFS, DEVTMPFS_MOUNT, FHANDLE, AUTOFS_FS (systemd)
 # Default targets: Image modules ("none" = config only). JOBS=4 by default.
+# EXTRA_MODULES adds drivers as modules, e.g. Bluetooth's virtual HCI:
+#   EXTRA_MODULES=BT_HCIVHCI scripts/build-vegas-gki-kernel.sh tier1 modules_prepare
+#   EXTRA_MODULES=BT_HCIVHCI scripts/build-vegas-gki-kernel.sh tier1 M=drivers/bluetooth modules
 #
 # Expects the layout from notes/kernel-build-20261010.md under
 # third_party/kernel/gki-root/disks/build-disk/src/android/common-android13-5.15-2025-05/
@@ -87,6 +90,10 @@ KMI_LISTS="android/abi_gki_aarch64 $(sed -n '/^ADDITIONAL_KMI_SYMBOL_LISTS="/,/^
 if [ "$VARIANT" = tier1 ]; then
 	"$SRC/scripts/config" --file "$OUT/.config" -e DEVTMPFS -e DEVTMPFS_MOUNT -e FHANDLE -e AUTOFS_FS
 fi
+# EXTRA_MODULES="BT_HCIVHCI ...": extra drivers as =m, for out-of-Image modules
+# built with "M=<dir> modules" after modules_prepare (the Image is unchanged;
+# they link against the exported KMI symbols in Module.symvers).
+for c in ${EXTRA_MODULES:-}; do "$SRC/scripts/config" --file "$OUT/.config" -m "$c"; done
 "${M[@]}" olddefconfig
 
 # Embed the stock build's module-signing certificate (public part only, cut out

@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Bluetooth
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
@@ -13,7 +14,8 @@ import qs.Ui
 // Back/Home (vegas.mobile treats it as a dismissable overlay).
 //
 //   time, date                         battery, charging, temperature
-//   [ Wi-Fi ]          [ Do Not Disturb ]
+//   [ Wi-Fi ]          [ Bluetooth ]
+//   [ Do Not Disturb ] [ Airplane mode ]
 //   [ Keyboard ]       [ Screenshot ]
 //   [ Omarchy ]        [ Power ]
 //   brightness ───────●──────
@@ -61,6 +63,16 @@ Item {
   }
   readonly property bool wifiConnected: wifiState === "COMPLETED"
   readonly property bool wifiOff: wifiState === "DISCONNECTED" || wifiState === "INACTIVE" || wifiState === ""
+
+  readonly property var btAdapter: Bluetooth.defaultAdapter
+  readonly property bool btOn: btAdapter !== null && btAdapter.enabled === true
+  readonly property string btDevice: {
+    var list = Bluetooth.devices ? Bluetooth.devices.values : []
+    for (var i = 0; i < list.length; i++)
+      if (list[i] && list[i].connected) return String(list[i].name || list[i].deviceName || "Connected")
+    return ""
+  }
+  readonly property bool airplane: root.wifiOff && !root.btOn
 
   readonly property var notificationService: shell && typeof shell.serviceFor === "function"
     ? shell.serviceFor("omarchy.notifications") : null
@@ -247,6 +259,23 @@ Item {
     root.run(["vegas-wifi", root.wifiOff ? "on" : "off"])
     refreshLater.restart()
   }
+  function btToggle() {
+    if (root.btAdapter) root.btAdapter.enabled = !root.btAdapter.enabled
+  }
+  // Omarchy's Bluetooth device list (a status-bar widget popout).
+  function btDevices() {
+    root.hideSelf()
+    if (!root.btOn && root.btAdapter) root.btAdapter.enabled = true
+    if (root.shell && typeof root.shell.summon === "function") root.shell.summon("omarchy.bluetooth", "")
+  }
+  // Airplane mode: Wi-Fi and Bluetooth off; off again restores both.
+  function airplaneToggle() {
+    var on = !root.airplane
+    root.run(["vegas-wifi", on ? "off" : "on"])
+    if (root.btAdapter) root.btAdapter.enabled = !on
+    refreshLater.restart()
+  }
+
   function scan() {
     if (scanProc.running) return
     root.scanning = true
@@ -454,7 +483,8 @@ Item {
 
             Repeater {
               model: [
-                { key: "wifi" }, { key: "dnd" },
+                { key: "wifi" }, { key: "bluetooth" },
+                { key: "dnd" }, { key: "airplane" },
                 { key: "keyboard" }, { key: "screenshot" },
                 { key: "menu" }, { key: "power" }
               ]
@@ -464,8 +494,12 @@ Item {
                 required property var modelData
                 readonly property string key: modelData.key
                 readonly property bool on: key === "wifi" ? root.wifiConnected
+                  : key === "bluetooth" ? root.btOn
+                  : key === "airplane" ? root.airplane
                   : key === "dnd" ? root.dnd : false
                 readonly property string title: key === "wifi" ? "Wi-Fi"
+                  : key === "bluetooth" ? "Bluetooth"
+                  : key === "airplane" ? "Airplane mode"
                   : key === "dnd" ? "Do Not Disturb"
                   : key === "keyboard" ? "Keyboard"
                   : key === "screenshot" ? "Screenshot"
@@ -473,6 +507,9 @@ Item {
                 readonly property string subtitle: key === "wifi"
                     ? (root.wifiConnected && root.currentNetwork ? root.currentNetwork.ssid
                        : root.wifiOff ? "Off" : root.wifiState === "COMPLETED" ? "Connected" : "Not connected")
+                  : key === "bluetooth" ? (!root.btAdapter ? "Unavailable" : !root.btOn ? "Off"
+                                           : root.btDevice !== "" ? root.btDevice : "On")
+                  : key === "airplane" ? (root.airplane ? "On" : "Off")
                   : key === "dnd" ? (root.dnd ? "On" : "Off")
                   : key === "keyboard" ? "Show / hide"
                   : key === "screenshot" ? "Whole screen"
@@ -480,6 +517,8 @@ Item {
                 readonly property string icon: key === "wifi"
                     ? root.glyph(root.wifiConnected && root.currentNetwork
                                  ? root.wifiGlyphs[root.signalBars(root.currentNetwork.dbm)] : 0xf05aa)
+                  : key === "bluetooth" ? root.glyph(root.btDevice !== "" ? 0xf00b1 : root.btOn ? 0xf00af : 0xf00b2)
+                  : key === "airplane" ? root.glyph(0xf001d)
                   : key === "dnd" ? root.glyph(root.dnd ? 0xf009b : 0xf009a)
                   : key === "keyboard" ? root.glyph(0xf030c)
                   : key === "screenshot" ? root.glyph(0xf0100)
@@ -541,7 +580,12 @@ Item {
                       // Tap: networks; long-press: on/off.
                       if (held) root.wifiToggle()
                       else { root.wifiExpanded = !root.wifiExpanded; if (root.wifiExpanded) root.scan() }
-                    } else if (k === "dnd") root.toggleDnd()
+                    } else if (k === "bluetooth") {
+                      // Tap: devices; long-press: on/off (as Wi-Fi).
+                      if (held) root.btToggle()
+                      else root.btDevices()
+                    } else if (k === "airplane") root.airplaneToggle()
+                    else if (k === "dnd") root.toggleDnd()
                     else if (k === "keyboard") root.toggleKeyboard()
                     else if (k === "screenshot") root.screenshot()
                     else if (k === "menu") root.openMenu("root")

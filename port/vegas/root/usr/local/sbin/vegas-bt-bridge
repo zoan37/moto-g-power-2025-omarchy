@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Bluetooth for BlueZ: bridge MediaTek's /dev/stpbt to a virtual HCI controller.
+
+The combo chip's Bluetooth (bt_drv_connac1x.ko over WMT/BTIF) only exposes raw
+H4 HCI on /dev/stpbt for Android's vendor HAL; there is no kernel HCI driver
+for it. hci_vhci (built for this kernel, notes/bluetooth-20261011.md) gives
+BlueZ an hci0 whose traffic this process copies to and from /dev/stpbt.
+
+Before handing the controller over, it programs the phone's own Bluetooth
+address (MediaTek vendor command 0xFC1A; it survives HCI Reset). The address
+comes from the factory NVRAM backup (the nvram partition: data region at
+0x20000, APRDEB/BT_Addr record at +0x36). The chip's default is MediaTek's
+placeholder 00:00:46:67:61:01, the same on every phone.
+"""
+import os
+import select
+import struct
+import sys
+import time
+
+STPBT = '/dev/stpbt'
+VHCI = '/dev/vhci'
+NVRAM = '/dev/disk/by-partlabel/nvram'
+BT_ADDR_OFFSET = 0x20000 + 0x36
+PLACEHOLDER = bytes.fromhex('000046676101')
+
+H4_CMD, H4_ACL, H4_SCO, H4_EVT, H4_ISO, H4_VENDOR = 1, 2, 3, 4, 5, 0xff
+
+
+def log(*args):
+    print(time.strftime('%H:%M:%S'), *args, flush=True)
+
+
+def packet_length(buf):
+    """Length of the complete H4 packet at the start of buf, or 0 if incomplete."""
+    if not buf:
+        return 0
+    kind = buf[0]
+    if kind == H4_EVT:
+        return 3 + buf[2] if len(buf) >= 3 else 0
+    if kind == H4_ACL:
+        return 5 + struct.unpack_from('<H', buf, 3)[0] if len(buf) >= 5 else 0
+    if kind == H4_SCO:
+        return 4 + buf[3] if len(buf) >= 4 else 0
+    if kind == H4_ISO:
+        return 5 + (struct.unpack_from('<H', buf, 3)[0] & 0x3fff) if len(buf) >= 5 else 0
+    if kind == H4_CMD:
+        return 4 + buf[3] if len(buf) >= 4 else 0
+    raise ValueError('unknown H4 packet type 0x%02x' % kind)
+
+
+def patch_event(pkt):
+    """Hide controller features the firmware advertises but doesn't implement.
+
+    The chip sets LMP_SYNC_TRAIN (extended features page 2, byte 0, bit 0x04)
+    yet answers Read Synchronization Train Parameters (0x0c77) with "Unknown
+    HCI Command", which makes the kernel abort controller setup.
+    """
+    # Command Complete for Read Local Extended Features (0x1004):
+    # 04 0e len ncmd 04 10 status page max_page features[8]
+    if len(pkt) >= 17 and pkt[0] == H4_EVT and pkt[1] == 0x0e and pkt[4:6] == b'\x04\x10' \
+            and pkt[6] == 0 and pkt[7] == 2 and pkt[9] & 0x04:
+        pkt = pkt[:9] + bytes([pkt[9] & ~0x04]) + pkt[10:]
+    return pkt
+
+
+def read_event(fd, timeout=3.0):
+    buf, end = b'', time.time() + timeout
+    while time.time() < end:
+        ready, _, _ = select.select([fd], [], [], 0.2)
+        if ready:
+            buf += os.read(fd, 4096)
+            n = packet_length(buf)
+            if n and len(buf) >= n:
+                return buf[:n]
+    return b''
+
+
+def command(fd, opcode, params=b''):
+    os.write(fd, struct.pack('<BHB', H4_CMD, opcode, len(params)) + params)
+    return read_event(fd)
+
+
+def bt_address():
+    try:
+        with open(NVRAM, 'rb') as f:
+            f.seek(BT_ADDR_OFFSET)
+            addr = f.read(6)
+    except OSError as e:
+        log('no factory address:', e)
+        return None
+    if len(addr) != 6 or addr in (b'\0' * 6, b'\xff' * 6, PLACEHOLDER):
+        log('no usable factory address in nvram')
+        return None
+    return addr
+
+
+def main():
+    stp = os.open(STPBT, os.O_RDWR | os.O_NONBLOCK)   # powers Bluetooth on (WMT)
+    time.sleep(0.3)
+    if not command(stp, 0x0c03):                        # HCI_Reset
+        sys.exit('controller does not answer HCI_Reset')
+    addr = bt_address()
+    if addr:
+        ev = command(stp, 0xfc1a, addr[::-1])
+        log('factory address set' if len(ev) >= 7 and ev[6] == 0 else 'setting the address failed: ' + ev.hex())
+
+    vhci = os.open(VHCI, os.O_RDWR)
+    os.write(vhci, bytes([H4_VENDOR, 0x00]))           # create a primary (BR/EDR+LE) controller
+    created = os.read(vhci, 16)
+    index = struct.unpack_from('<H', created, 2)[0] if len(created) >= 4 and created[0] == H4_VENDOR else -1
+    log('hci%d ready' % index)
+
+    pending = b''
+    while True:
+        ready, _, _ = select.select([stp, vhci], [], [])
+        if vhci in ready:
+            pkt = os.read(vhci, 4096)                  # one complete packet from the host
+            if pkt:
+                os.write(stp, pkt)
+        if stp in ready:
+            try:
+                pending += os.read(stp, 65536)
+            except BlockingIOError:
+                pass
+            while True:
+                n = packet_length(pending)
+                if not n or len(pending) < n:
+                    break
+                os.write(vhci, patch_event(pending[:n]))   # vhci wants one packet per write
+                pending = pending[n:]
+
+
+if __name__ == '__main__':
+    main()

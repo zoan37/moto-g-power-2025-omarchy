@@ -78,6 +78,14 @@ else
   (( sinks > 0 )) && ok "PipeWire speaker sink" || warn "no PipeWire speaker sink"
 fi
 
+echo "Bluetooth"
+if [[ -e /var/lib/vegas/no-bluetooth ]]; then warn "disabled (no-bluetooth)"
+else
+  pgrep -f /usr/local/sbin/vegas-bt-bridge >/dev/null && ok "stpbt bridge running" || fail "stpbt bridge not running"
+  [[ -e /sys/class/bluetooth/hci0 ]] && ok "hci0 present" || fail "no hci0"
+  systemctl is-active -q bluetooth 2>/dev/null && ok "bluetoothd running" || warn "bluetoothd not running"
+fi
+
 echo "Desktop"
 pgrep -x Hyprland >/dev/null && ok "Hyprland running" || fail "Hyprland not running"
 pgrep -f 'quickshell -n' >/dev/null && ok "Omarchy shell running" || fail "Omarchy shell not running"
