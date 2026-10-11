@@ -99,7 +99,7 @@ else
   [[ $(stat -c %G /sys/class/leds/vibrator/activate 2>/dev/null) == input ]] && ok "vibrator (group input)" || fail "no vibrator"
 fi
 [[ -e /var/lib/vegas/no-double-tap ]] && warn "double-tap to wake disabled" ||
-  { dmesg | grep -q "should_enable_gesture=1" && ok "double-tap to wake armed" || warn "double-tap to wake not armed"; }
+  { journalctl -k -b -g "should_enable_gesture=1" -q --no-pager 2>/dev/null | grep -q .; && ok "double-tap to wake armed" || warn "double-tap to wake not armed"; }
 
 echo "Desktop"
 pgrep -x Hyprland >/dev/null && ok "Hyprland running" || fail "Hyprland not running"
