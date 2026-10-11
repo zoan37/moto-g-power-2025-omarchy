@@ -1,0 +1,11 @@
+#!/bin/bash
+# session-run COMMAND...: run a command as the desktop user inside the desktop
+# session's environment (its private D-Bus, Wayland and Hyprland), copied from
+# the running Omarchy shell. For root services that notify or talk to the
+# desktop (the desktop uses a dbus-run-session bus, not /run/user/1000/bus).
+set -u
+qs=$(pgrep -x quickshell | head -1)
+[[ -n $qs ]] || { echo 'no desktop session' >&2; exit 1; }
+mapfile -t env < <(tr '\0' '\n' <"/proc/$qs/environ" |
+  grep -E '^(PATH|HOME|USER|LANG|XDG_[A-Z_]+|WAYLAND_DISPLAY|DBUS_SESSION_BUS_ADDRESS|HYPRLAND_INSTANCE_SIGNATURE|OMARCHY_[A-Z_]+|VEGAS_[A-Z_]+)=')
+exec runuser -u omarchy -- env "${env[@]}" "$@"

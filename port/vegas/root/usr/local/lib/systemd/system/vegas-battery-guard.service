@@ -1,0 +1,7 @@
+# One critical-battery check (/usr/local/libexec/vegas/battery-guard).
+[Unit]
+Description=Critical battery check (clean shutdown at 3%)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/vegas/battery-guard

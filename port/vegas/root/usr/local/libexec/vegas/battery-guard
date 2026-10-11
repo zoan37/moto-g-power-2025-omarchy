@@ -1,0 +1,29 @@
+#!/bin/bash
+# Critical battery (vegas-battery-guard.timer, every minute; root). Like Android:
+# at 3% or less while discharging, warn, and if the phone is still unplugged a
+# minute later, shut down cleanly instead of letting the PMIC cut power at
+# undervoltage (a hard power loss on the ext4-in-userdata root).
+# Omarchy's shell already warns at 10% (UPower). Opt out: /var/lib/vegas/no-battery-guard.
+set -u
+[[ -e /var/lib/vegas/no-battery-guard ]] && exit 0
+b=/sys/class/power_supply/battery
+cap=$(cat "$b/capacity" 2>/dev/null) status=$(cat "$b/status" 2>/dev/null)
+# Testing: VEGAS_TEST_CAPACITY / VEGAS_TEST_STATUS fake the readings, VEGAS_DRY_RUN=1 skips the power-off.
+cap=${VEGAS_TEST_CAPACITY:-$cap} status=${VEGAS_TEST_STATUS:-$status}
+marker=/run/vegas-battery-critical
+if [[ $status != Discharging || ! $cap =~ ^[0-9]+$ || $cap -lt 0 || $cap -gt 3 ]]; then
+  rm -f "$marker"
+  exit 0
+fi
+if [[ ! -e $marker ]]; then
+  date +%s >"$marker"
+  echo "$(date -Is) battery ${cap}%, discharging: shutting down in 60 s unless plugged in" >>/var/log/vegas/power.log
+  /usr/local/libexec/vegas/session-run notify-send -u critical -a Battery \
+    "Battery ${cap}% — shutting down" "Plug in the charger within a minute to keep the phone on." 2>/dev/null
+  /usr/local/libexec/vegas/session-run /usr/local/bin/vegas-vibrate long 2>/dev/null
+  exit 0
+fi
+(( $(date +%s) - $(cat "$marker") >= 55 )) || exit 0
+echo "$(date -Is) battery ${cap}%, still discharging: power off" >>/var/log/vegas/power.log
+[[ ${VEGAS_DRY_RUN:-0} == 1 ]] && { echo 'dry run: would power off'; exit 0; }
+exec /usr/local/libexec/vegas/power-transition poweroff
