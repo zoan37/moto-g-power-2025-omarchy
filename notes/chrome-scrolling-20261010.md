@@ -81,6 +81,22 @@ when new posts arrive.
 91% CPU). There is no hardware video decode on this kernel, so Chrome decodes in software. Turning
 off autoplay in X's settings avoids this.
 
+## Without autoplay video, and what didn't help
+
+With X's video URLs blocked in the bench (like setting X's autoplay to "Never"), X at 120 Hz runs
+at ~98–104 fps with 11–17% late frames (vs ~81 fps / 34% with autoplay). The synthetic feed reaches
+110 fps / 8% late.
+
+Tried without a clear gain (kept off):
+- ANGLE on ARM's Vulkan driver (`--use-angle=vulkan`, private ICD manifest for libmali r48): 107 fps /
+  11% vs GLES 110 / 8% on the feed. Chrome refuses Skia-Vulkan compositing on Ozone Wayland.
+- uclamp.min 614 on the frame-critical threads (renderer main + compositor, GPU main, viz
+  compositor, Hyprland): 11–14% vs 12–17% late, within noise. Clamping every Chrome thread
+  crowded the two A76 cores. Those threads spend ~70% of the time on the A55s without it.
+- `taskset` of the GPU process to the A76 cores: worse.
+
+The harness is in `scripts/chrome-scroll-bench/`.
+
 ## Where the time went
 
 With Mesa kbase compositing, the page itself was cheap (`ProxyMain::BeginMainFrame` ≈ 5 ms). The
