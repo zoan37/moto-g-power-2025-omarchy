@@ -147,3 +147,17 @@ check passes.
   EGL_EXT_device_* family). It would need EGL shims plus shader ports, for a few points of late frames
   at most, so it's shelved. `gpu-scanout-probe` (`PROBE_EGL_PLATFORM=gbm`) does pass on libmali, so
   libmali's GBM scanout itself works.
+
+## Hyprland `render:new_render_scheduling` (2026-10-11, afternoon)
+
+Hyprland 0.56's triple-buffering-when-late option, aimed at weak GPUs, is a candidate to win back the fence wait's
+cost. A/B on the synthetic feed at 120 Hz (scrollbench, 3 swipes per set, sets alternated, fence wait on):
+
+| sets | fps | late |
+|---|---|---|
+| off (3 sets) | 116.0 / 112.0 / 118.2 → **115.4** | 4.4 / 7.4 / 2.4 → **4.7%** |
+| on (4 sets) | 109.5 / 117.1 / 117.7 / 116.7 → **115.3** | 10.9 / 3.4 / 2.9 / 3.1 → **5.1%** |
+
+No difference beyond the run-to-run noise, and triple buffering adds a frame of latency when it kicks in, so it
+stays **off**. With the fence wait, the feed now runs ~115 fps / ~5% late (last night: 111.7–114.4 fps / 5.7–8.5%),
+after the system upgrade and the pinned bundle libraries.
