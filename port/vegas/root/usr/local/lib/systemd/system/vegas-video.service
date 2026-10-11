@@ -1,0 +1,19 @@
+# Hardware video decode (MediaTek decoder + mtk_stateful VA-API for Chrome), in the
+# background like native-init: video-prepare loads the modules, then holds its
+# one-strike boot marker for 60 s. Never unload these modules (removing
+# mtk-vcodec-dec-v1 reboots the phone), so this unit refuses manual stop/restart.
+[Unit]
+Description=MediaTek hardware video decoder (vendor modules, device nodes)
+# native-init started it after GPU preparation; keep vendor module loads in that order.
+After=local-fs.target vegas-gpu.service
+RefuseManualStop=yes
+
+[Service]
+Type=exec
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/vegas/video-prepare
+StandardOutput=append:/var/log/vegas/video.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

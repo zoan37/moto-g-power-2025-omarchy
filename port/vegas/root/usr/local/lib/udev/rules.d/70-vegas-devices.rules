@@ -1,0 +1,8 @@
+# Device permissions the boot scripts set with chgrp/chmod after mknod (native-init,
+# gpu-prepare, video-prepare). With devtmpfs + udev the nodes appear on their own;
+# these rules give them the same owner/group/mode. Harmless on native-init boots
+# (the scripts set the same values).
+SUBSYSTEM=="drm", KERNEL=="card0", GROUP="video", MODE="0660"
+SUBSYSTEM=="misc", KERNEL=="mali0", OWNER="omarchy", GROUP="video", MODE="0660"
+SUBSYSTEM=="dma_heap", KERNEL=="system|mtk_mm", GROUP="video", MODE="0660"
+SUBSYSTEM=="video4linux", ATTR{name}=="mtk-vcodec-dec", GROUP="video", MODE="0660"

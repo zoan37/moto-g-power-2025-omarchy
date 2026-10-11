@@ -1,0 +1,27 @@
+#!/bin/bash
+# systemd boot: disarm the ramdisk's desktop-watchdog (vegas-watchdog-handoff.service).
+# The ramdisk starts bringup/desktop-watchdog (static; RESTART2 "bootloader" after
+# 180 s) just before switch_root, so a root that cannot start still ends in fastboot.
+# native-init kills it as soon as it runs. Here it is killed only once the root
+# recovery HTTP service listens on 192.168.77.1:8080: a systemd boot without the USB
+# recovery channel still ends in fastboot, and the ramdisk's systemd-pending strike
+# then starts native-init on the next boot.
+set -u
+listening() { # 192.168.77.1:8080 in LISTEN (0A) state; /proc/net/tcp is little-endian hex
+  awk '$2 == "014DA8C0:1F90" && $4 == "0A" { found = 1 } END { exit !found }' /proc/net/tcp
+}
+for ((i=0; i<90; i++)); do
+  if listening; then
+    if [[ -f /run/desktop-watchdog.pid ]]; then
+      read -r pid </run/desktop-watchdog.pid
+      if [[ $pid =~ ^[0-9]+$ && $(cat "/proc/$pid/comm" 2>/dev/null) == desktop-watch* ]]; then
+        kill "$pid" && echo "desktop-watchdog $pid stopped; recovery httpd is listening"
+      fi
+      rm -f /run/desktop-watchdog.pid
+    fi
+    exit 0
+  fi
+  sleep 1
+done
+echo 'Recovery httpd never listened on 192.168.77.1:8080; desktop-watchdog stays armed (fastboot at 180 s)'
+exit 1

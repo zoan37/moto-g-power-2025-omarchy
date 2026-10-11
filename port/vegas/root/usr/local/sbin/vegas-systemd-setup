@@ -1,0 +1,169 @@
+#!/bin/bash
+# Prepare the phone's root for systemd as PID 1 (notes/systemd-migration-20261011.md).
+#
+#   vegas-systemd-setup preflight   read-only report: kernel, systemd, enabled units
+#                                   that would fight the phone's own services, PAM
+#   vegas-systemd-setup install     enable the vegas units, disable the conflicting
+#                                   ones, default target, linger, polkit rule
+#   vegas-systemd-setup undo        restore what install changed
+#
+# Everything install changes is unit/enablement state that only systemd reads, so it
+# does nothing on a native-init boot. It does not choose systemd for the next boot:
+# that is vegas-init systemd-once (or systemd), with the systemd-aware ramdisk.
+# Runs as root on the phone, under native-init or systemd (systemctl works offline
+# when PID 1 is not systemd).
+set -u
+state=/var/lib/vegas/systemd-setup
+units=/usr/local/lib/systemd/system
+ours=(
+  vegas-usb-gadget.service vegas-recovery-httpd.service vegas-watchdog-handoff.service
+  vegas-power-boot-report.service vegas-loop-dio.service vegas-thermal-guard.service
+  vegas-power-request.service vegas-persistent-guard.timer
+  vegas-gpu.service vegas-gpu-boost.service vegas-gpu-confirm.timer
+  vegas-video.service vegas-fuelgauge.service vegas-wifi.service
+  vegas-sched.service vegas-seatd.service vegas-desktop.service
+  vegas-serial-shell.service
+)
+# Not running under native-init, and each would fight the phone's own services: a
+# display manager or Omarchy's autologin for the DRM master; iwd/NetworkManager/
+# networkd/resolved for wlan0, usb0 and resolv.conf (wifi-up runs wpa_supplicant +
+# dhcpcd); timesyncd vs wifi-up's ntpd; ufw would drop the laptop's connections to
+# the recovery httpd; sshd/avahi/docker would newly listen on Wi-Fi.
+conflicts=(
+  display-manager.service sddm.service gdm.service greetd.service ly.service lightdm.service
+  omarchy-seamless-login.service seatd.service
+  iwd.service NetworkManager.service NetworkManager-wait-online.service
+  systemd-networkd.service systemd-networkd.socket systemd-networkd-wait-online.service
+  systemd-resolved.service systemd-timesyncd.service wpa_supplicant.service dhcpcd.service
+  ufw.service sshd.service sshd.socket avahi-daemon.service avahi-daemon.socket
+  docker.service docker.socket
+)
+
+on_phone() {
+  local src
+  src=$(findmnt -n -o SOURCE /)
+  [[ $(cat /proc/sys/kernel/hostname) == moto-vegas ]] &&
+    [[ $src == /dev/loop7 || $src == '/dev/mmcblk0p1[/omarchy]' ]]
+}
+need_root_on_phone() {
+  [[ $(id -u) == 0 ]] || { echo 'Run as root.' >&2; exit 1; }
+  on_phone || { echo 'Refusing: not the phone root (hostname moto-vegas, / on loop7 or the card).' >&2; exit 1; }
+}
+sc() { # offline (unit files only) unless PID 1 is systemd
+  if [[ $(cat /proc/1/comm) == systemd ]]; then
+    systemctl --no-reload --no-pager "$@"
+  else
+    SYSTEMD_OFFLINE=1 systemctl --no-reload --no-pager "$@"
+  fi
+}
+real_unit() { # resolve an alias such as display-manager.service to its unit file name
+  local link=/etc/systemd/system/$1
+  if [[ -L $link ]]; then basename "$(readlink "$link")"; else echo "$1"; fi
+}
+
+preflight() {
+  echo '== Kernel'
+  uname -rv
+  grep -qw devtmpfs /proc/filesystems && echo 'devtmpfs: yes' || echo 'devtmpfs: NO (systemd cannot boot)'
+  if [[ -r /proc/config.gz ]]; then
+    zcat /proc/config.gz | grep -E '^(# )?CONFIG_(DEVTMPFS|DEVTMPFS_MOUNT|FHANDLE|AUTOFS_FS|CGROUP_PIDS|TMPFS_POSIX_ACL|USER_NS|PID_NS|SYSVIPC|VT)[= ]'
+  fi
+  echo "PID 1: $(cat /proc/1/comm); /dev: $(findmnt -n -o FSTYPE /dev); root: $(findmnt -n -o SOURCE /)"
+  echo '== systemd and tools'
+  /usr/lib/systemd/systemd --version 2>/dev/null | head -1 || echo 'MISSING /usr/lib/systemd/systemd'
+  for f in /usr/bin/seatd /sbin/agetty /usr/lib/upowerd /usr/bin/dbus-run-session /usr/bin/losetup \
+           /usr/bin/ip /usr/bin/python3 /usr/local/libexec/vegas/busybox /usr/local/libexec/vegas/to-bootloader; do
+    [[ -x $f ]] && echo "ok      $f" || echo "MISSING $f"
+  done
+  for u in upower.service systemd-logind.service user-runtime-dir@.service; do
+    [[ -n $(sc list-unit-files --no-legend "$u" 2>/dev/null) ]] && echo "ok      $u" || echo "MISSING $u"
+  done
+  for u in "${ours[@]}"; do
+    [[ -f $units/$u ]] || echo "MISSING $units/$u"
+  done
+  [[ -s /etc/machine-id ]] && echo 'machine-id: set' || echo 'machine-id: EMPTY (first-boot units would run; install writes one)'
+  echo "default target: $(sc get-default 2>/dev/null)"
+  echo '== /etc/fstab entries (a missing device sends systemd to emergency mode)'
+  grep -Ev '^[[:space:]]*(#|$)' /etc/fstab 2>/dev/null || echo '(none)'
+  echo "== /etc/resolv.conf: $(if [[ -L /etc/resolv.conf ]]; then echo "symlink -> $(readlink /etc/resolv.conf)"; else echo 'regular file'; fi)"
+  echo '== Enabled units that conflict with the phone services (install disables them)'
+  for u in "${conflicts[@]}"; do
+    s=$(sc is-enabled "$u" 2>/dev/null) || true
+    [[ $s == enabled || $s == alias || $s == enabled-runtime ]] && echo "CONFLICT $u ($s -> $(real_unit "$u"))"
+  done
+  echo '== All enabled system units (review)'
+  sc list-unit-files --state=enabled --no-legend 2>/dev/null | awk '{print "  " $1}'
+  echo '== Enabled user units: global, and the omarchy user'
+  sc --global list-unit-files --state=enabled --no-legend 2>/dev/null | awk '{print "  global " $1}'
+  find /home/omarchy/.config/systemd/user -name '*.wants' -type d -exec ls -1 {} + 2>/dev/null | sed 's/^/  omarchy /'
+  echo '== PAM: runuser goes through pam_systemd? (a logind session per runuser call)'
+  grep -H -E 'include|pam_systemd' /etc/pam.d/runuser /etc/pam.d/system-login 2>/dev/null | sed 's/^/  /'
+  echo "== /usr/lib/modules/$(uname -r): $(ls "/usr/lib/modules/$(uname -r)" 2>/dev/null | head -5 | tr '\n' ' ')"
+  echo '   (udev coldplug autoloads modules by modalias from here, under native-init and systemd alike)'
+  echo "== linger: $([[ -e /var/lib/systemd/linger/omarchy ]] && echo yes || echo no)"
+  echo "== polkit rules dir: $([[ -d /etc/polkit-1/rules.d ]] && echo present || echo absent)"
+  echo "== groups of omarchy: $(id -nG omarchy)"
+  echo "== installed: $([[ -f $state/installed ]] && cat "$state/installed" || echo no)"
+}
+
+install_setup() {
+  need_root_on_phone
+  for u in "${ours[@]}"; do
+    [[ -f $units/$u ]] || { echo "Missing $units/$u; install the files first." >&2; exit 1; }
+  done
+  mkdir -p "$state"
+  [[ -f $state/installed ]] && { echo 'Already installed (undo first to redo).'; exit 0; }
+  : >"$state/disabled-units"
+  for u in "${conflicts[@]}"; do
+    s=$(sc is-enabled "$u" 2>/dev/null) || true
+    [[ $s == enabled || $s == alias ]] || continue
+    real=$(real_unit "$u")
+    grep -qx "$real" "$state/disabled-units" && continue
+    sc disable "$real" && echo "$real" >>"$state/disabled-units" && echo "disabled $real"
+  done
+  sc get-default >"$state/previous-default" 2>/dev/null || true
+  sc set-default multi-user.target
+  sc enable "${ours[@]}"
+  if [[ ! -e /var/lib/systemd/linger/omarchy ]]; then
+    mkdir -p /var/lib/systemd/linger
+    : >/var/lib/systemd/linger/omarchy
+    : >"$state/linger-created"
+  fi
+  # The root is a loop device or a card subdirectory; no GPT auto-mounts.
+  if [[ ! -e /etc/systemd/system-generators/systemd-gpt-auto-generator ]]; then
+    mkdir -p /etc/systemd/system-generators
+    ln -s /dev/null /etc/systemd/system-generators/systemd-gpt-auto-generator
+    : >"$state/gpt-auto-masked"
+  fi
+  if [[ -d /etc/polkit-1/rules.d || -d /usr/share/polkit-1 ]]; then
+    install -D -m 0644 /usr/local/share/vegas/systemd/49-vegas-power.rules /etc/polkit-1/rules.d/49-vegas-power.rules
+    : >"$state/polkit-installed"
+  fi
+  [[ -s /etc/machine-id ]] || dbus-uuidgen >/etc/machine-id
+  date -Is >"$state/installed"
+  sync
+  echo 'Installed. Nothing changes on native-init boots. Next: vegas-init systemd-once (needs the systemd-aware ramdisk).'
+}
+
+undo_setup() {
+  need_root_on_phone
+  [[ -f $state/installed ]] || { echo 'Not installed.'; exit 0; }
+  rm -f /etc/vegas/systemd /etc/vegas/systemd-once
+  sc disable "${ours[@]}" || true
+  while read -r u; do [[ -n $u ]] && sc enable "$u" && echo "re-enabled $u"; done <"$state/disabled-units"
+  prev=$(cat "$state/previous-default" 2>/dev/null)
+  [[ -n $prev ]] && sc set-default "$prev"
+  [[ -e $state/linger-created ]] && rm -f /var/lib/systemd/linger/omarchy
+  [[ -e $state/gpt-auto-masked ]] && rm -f /etc/systemd/system-generators/systemd-gpt-auto-generator
+  [[ -e $state/polkit-installed ]] && rm -f /etc/polkit-1/rules.d/49-vegas-power.rules
+  mv "$state" "$state.undone-$(date +%Y%m%dT%H%M%S)"
+  sync
+  echo 'Undone; next boot is native-init.'
+}
+
+case ${1:-} in
+  preflight) preflight ;;
+  install) install_setup ;;
+  undo) undo_setup ;;
+  *) echo 'Usage: vegas-systemd-setup preflight|install|undo' >&2; exit 2 ;;
+esac

@@ -1,0 +1,17 @@
+# Phone (vegas) on systemd: see notes/systemd-migration-20261011.md.
+[Unit]
+Description=USB recovery link: ACM serial + ECM network, 192.168.77.1/30 on usb0
+DefaultDependencies=no
+After=sys-kernel-config.mount
+Before=sysinit.target vegas-recovery-httpd.service
+IgnoreOnIsolate=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/vegas/systemd/usb-gadget
+# Logs to the journal (journalctl -u vegas-usb-gadget): a recovery-critical unit must not depend
+# on /var/log/vegas existing.
+
+[Install]
+WantedBy=sysinit.target

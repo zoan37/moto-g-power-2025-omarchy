@@ -8,7 +8,9 @@ hl.config({
   -- llvmpipe: colour-management shaders and FP16 buffers dominate frame time.
   render = { direct_scanout = false, cm_enabled = false, use_fp16 = 0 },
   cursor = { no_hardware_cursors = true, use_cpu_buffer = true,
-             hide_on_key_press = false, hide_on_touch = native_touch, inactive_timeout = 0 },
+             hide_on_key_press = false, hide_on_touch = native_touch,
+             -- touch phone: no arrow sitting on screen after boot
+             inactive_timeout = native_touch and 1 or 0 },
   animations = { enabled = false },
   xwayland = { enabled = false },
   -- vfr: redraw only on damage. On the Mali it lifts Chrome touch scrolling

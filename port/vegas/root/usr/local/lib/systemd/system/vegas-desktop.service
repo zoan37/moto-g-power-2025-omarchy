@@ -1,0 +1,42 @@
+# The phone desktop, as native-init starts it: vegas-desktop as omarchy in the
+# top-app group. vegas-desktop picks direct-DRM Hyprland on the Mali (when
+# vegas-gpu prepared it) or the nested Weston/llvmpipe path, and runs the session
+# under dbus-run-session with the bundle's service-free launchers (OMARCHY_PROOT=1).
+# Phase 1 keeps that: no PAM/logind session (logind would want ACLs devtmpfs cannot
+# hold here, CONFIG_TMPFS_POSIX_ACL is off), seatd for devices. omarchy lingers, so
+# logind keeps /run/user/1000 for the whole boot. Phase 2 (PAMName=login + uwsm,
+# like quigon-desktop@) is described in notes/systemd-migration-20261011.md.
+[Unit]
+Description=Omarchy phone desktop (Hyprland as omarchy on the DSI panel, seatd, no VT)
+Requires=vegas-seatd.service
+Wants=vegas-gpu.service vegas-sched.service upower.service dbus.socket
+Wants=vegas-bootctrl-mark.timer vegas-systemd-confirm.timer
+After=vegas-seatd.service vegas-gpu.service vegas-sched.service dbus.socket
+After=systemd-user-sessions.service upower.service
+# /run/user/1000 must be logind's tmpfs before Weston/Hyprland put sockets in it:
+# mounted later, it would hide them. (omarchy lingers, so logind never unmounts it
+# when a runuser/PAM session of the user ends.)
+Wants=user-runtime-dir@1000.service
+After=user-runtime-dir@1000.service user@1000.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Slice=vegas-top.slice
+User=omarchy
+Group=omarchy
+WorkingDirectory=~
+Environment=HOME=/home/omarchy USER=omarchy LOGNAME=omarchy
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8
+ExecStartPre=+/usr/local/libexec/vegas/systemd/desktop-pre
+ExecStart=/usr/local/bin/vegas-desktop
+# native-init never restarted the desktop. Come back after a crash or an Omarchy
+# logout (no display manager to return to), like the Chromebook's quigon-desktop@;
+# at most 3 starts per 5 minutes.
+Restart=always
+RestartSec=2
+StandardOutput=append:/var/log/vegas/desktop.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Return to fastboot (no /etc/vegas-persistent-boot)
+ConditionPathExists=!/etc/vegas-persistent-boot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/vegas/power-transition fastboot
+StandardOutput=append:/var/log/vegas/init.log
+StandardError=inherit

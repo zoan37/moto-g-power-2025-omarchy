@@ -1,0 +1,12 @@
+// Phone (vegas) on systemd, installed into /etc/polkit-1/rules.d by
+// vegas-systemd-setup. Power transitions go through vegas-power and the root helper
+// (USB/charger check before power-off, direct sync + RESTART2), never logind's
+// shutdown path, which on this phone restarted instead of powering off; suspend is
+// untested. Stock omarchy-system-{reboot,shutdown} call `systemctl reboot/poweroff`
+// through systemd-run --user, which works once the user manager runs.
+polkit.addRule(function (action, subject) {
+    if (/^org\.freedesktop\.login1\.(power-off|reboot|halt|suspend|hibernate|hybrid-sleep|suspend-then-hibernate|set-reboot-to-firmware-setup|set-reboot-parameter)/.test(action.id) &&
+        subject.user != "root") {
+        return polkit.Result.NO;
+    }
+});

@@ -1,0 +1,17 @@
+[Unit]
+Description=Battery temperature guard: fastboot at 40.0 C
+DefaultDependencies=no
+Before=sysinit.target
+IgnoreOnIsolate=yes
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/local/libexec/vegas/systemd/thermal-guard
+Restart=always
+RestartSec=2
+OOMScoreAdjust=-1000
+# Logs to the journal (journalctl -u vegas-thermal-guard): a recovery-critical unit must not depend
+# on /var/log/vegas existing.
+
+[Install]
+WantedBy=sysinit.target

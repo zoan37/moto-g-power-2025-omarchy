@@ -1,0 +1,9 @@
+# The USB recovery interface keeps its kernel name and its fixed MAC (the laptop's
+# NetworkManager profile matches the host MAC 02:00:00:00:77:02).
+[Match]
+OriginalName=usb0
+
+[Link]
+NamePolicy=
+Name=usb0
+MACAddressPolicy=none

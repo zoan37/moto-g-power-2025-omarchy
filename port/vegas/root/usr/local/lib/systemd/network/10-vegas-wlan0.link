@@ -1,0 +1,8 @@
+# wifi-up, wpa_supplicant and vegas-wifi expect the WMT driver's wlan0.
+[Match]
+OriginalName=wlan0
+
+[Link]
+NamePolicy=
+Name=wlan0
+MACAddressPolicy=none

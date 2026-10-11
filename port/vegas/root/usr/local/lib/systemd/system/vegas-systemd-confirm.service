@@ -1,0 +1,9 @@
+[Unit]
+Description=Confirm the systemd boot (clear the ramdisk's systemd-pending strike)
+ConditionPathExists=/var/lib/vegas/systemd-pending
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/vegas/systemd/systemd-confirm
+StandardOutput=append:/var/log/vegas/init.log
+StandardError=inherit

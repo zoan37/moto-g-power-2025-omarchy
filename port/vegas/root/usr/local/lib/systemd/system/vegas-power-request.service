@@ -1,0 +1,19 @@
+# vegas-power / omarchy-system-{reboot,shutdown} drop a request file; root runs the
+# verified direct-syscall transition (no systemd shutdown: compositor/device
+# teardown made the phone restart instead of entering fastboot, see
+# notes/linux-bringup-20261006.md).
+[Unit]
+Description=Reboot/power-off/fastboot requests from the desktop user
+After=local-fs.target
+IgnoreOnIsolate=yes
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/local/libexec/vegas/systemd/power-request-watch
+Restart=always
+RestartSec=2
+StandardOutput=append:/var/log/vegas/init.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

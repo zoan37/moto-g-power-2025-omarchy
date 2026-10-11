@@ -1,0 +1,7 @@
+# Started by vegas-desktop.service (Wants=): fires 60 s after the desktop starts.
+[Unit]
+Description=Mark the A/B slot successful once the desktop has been up for a minute
+
+[Timer]
+OnActiveSec=60
+AccuracySec=1s

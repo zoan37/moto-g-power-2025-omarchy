@@ -1,0 +1,14 @@
+# The internal root is ext4 on /dev/loop7 over userdata (bringup/ufs-guard). Direct
+# I/O keeps pages from being cached twice. Not for the microSD rescue root.
+[Unit]
+Description=Direct I/O for the internal root's loop device
+DefaultDependencies=no
+Before=sysinit.target
+ConditionPathExists=/dev/loop7
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '[ "$$(findmnt -n -o SOURCE /)" != /dev/loop7 ] || losetup --direct-io=on /dev/loop7'
+
+[Install]
+WantedBy=sysinit.target

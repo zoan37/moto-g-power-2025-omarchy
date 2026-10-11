@@ -1,0 +1,15 @@
+[Unit]
+Description=top-app cpu.uclamp.latency_sensitive on vegas-top.slice
+Wants=vegas-top.slice
+After=vegas-top.slice
+Before=vegas-desktop.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/vegas/systemd/sched-tune
+StandardOutput=append:/var/log/vegas/init.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

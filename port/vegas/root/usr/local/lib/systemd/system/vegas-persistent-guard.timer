@@ -1,0 +1,14 @@
+# Bring-up safety net (native-init's "persistent-boot guard"): without
+# /etc/vegas-persistent-boot the phone returns to fastboot 180 s after PID 1 starts.
+# Checked at boot (here) and again when it fires (the service), so a test that
+# creates the marker in time keeps the boot running.
+[Unit]
+Description=Return to fastboot 180 s after boot unless /etc/vegas-persistent-boot exists
+ConditionPathExists=!/etc/vegas-persistent-boot
+
+[Timer]
+OnStartupSec=180
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

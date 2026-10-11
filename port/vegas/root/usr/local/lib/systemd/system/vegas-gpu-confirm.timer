@@ -1,0 +1,9 @@
+[Unit]
+Description=Clear the GPU desktop boot strike after 3 minutes up
+
+[Timer]
+OnStartupSec=180
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

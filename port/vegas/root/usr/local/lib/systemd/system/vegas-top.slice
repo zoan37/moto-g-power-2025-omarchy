@@ -1,0 +1,13 @@
+# Android-style foreground group (native-init's /sys/fs/cgroup/top-app): the desktop
+# session and every app it starts (they inherit the cgroup). Setting CPUWeight (100 is
+# the default weight) makes systemd enable the cpu controller here, so the Android
+# vendor file cpu.uclamp.latency_sensitive exists; vegas-sched.service writes it.
+# AllowedCPUs enables cpuset like native-init's "+cpu +cpuset" (all 8 CPUs, no limit).
+# The cgroup is /sys/fs/cgroup/vegas.slice/vegas-top.slice.
+[Unit]
+Description=Foreground (top-app) slice for the phone desktop
+Before=slices.target
+
+[Slice]
+CPUWeight=100
+AllowedCPUs=0-7

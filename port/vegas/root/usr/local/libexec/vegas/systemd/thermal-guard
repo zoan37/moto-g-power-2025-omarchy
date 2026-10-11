@@ -1,0 +1,15 @@
+#!/bin/bash
+# Battery temperature guard (vegas-thermal-guard.service), as native-init and the
+# ramdisk: at 40.0 C (sysfs tenths of a degree) the phone returns to fastboot.
+# No Android thermal userspace runs; vegas-gpu-boost stops boosting at 37.0 C.
+helper=/usr/local/libexec/vegas
+while sleep 2; do
+  temp=$(cat /sys/class/power_supply/battery/temp 2>/dev/null)
+  if [[ $temp =~ ^[0-9]+$ ]] && (( temp >= 400 )); then
+    echo "Battery temperature guard: $temp"
+    "$helper/power-transition" fastboot
+    # Only reached when the transition failed (e.g. another one holds the lock);
+    # systemd restarts the guard, which tries again.
+    exit 1
+  fi
+done

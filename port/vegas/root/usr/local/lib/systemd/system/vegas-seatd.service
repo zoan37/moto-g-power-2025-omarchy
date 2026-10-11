@@ -1,0 +1,20 @@
+# seatd exactly as native-init runs it: socket owned by the desktop user, no VT
+# binding (the GKI kernel has no CONFIG_VT; without SEATD_VTBOUND=0 on the daemon
+# Aquamarine fails with "CBackend::create() failed!", as on the Chromebook).
+# Used instead of the package's seatd.service (-g seat), which it conflicts with.
+[Unit]
+Description=Seat management daemon for the phone desktop (no VT)
+Conflicts=seatd.service
+After=systemd-udevd.service
+Before=vegas-desktop.service
+
+[Service]
+Environment=SEATD_VTBOUND=0
+ExecStart=/usr/bin/seatd -u omarchy -l debug
+Restart=on-failure
+RestartSec=1
+StandardOutput=append:/var/log/vegas/seatd.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

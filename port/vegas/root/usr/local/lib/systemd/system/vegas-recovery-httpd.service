@@ -1,0 +1,29 @@
+# The root CGI recovery channel (http://192.168.77.1:8080/cgi-bin/{status,command,
+# return-fastboot}). First thing systemd starts: no ordering on sysinit, local-fs,
+# dbus or the network stack, never stopped by isolate (emergency/rescue) or
+# shutdown.target, and restarted forever. The busybox it runs is copied into the
+# root by the ramdisk on every boot.
+[Unit]
+Description=Root recovery HTTP/CGI service on 192.168.77.1:8080 (USB network)
+DefaultDependencies=no
+Wants=vegas-usb-gadget.service
+After=vegas-usb-gadget.service
+Before=sysinit.target
+IgnoreOnIsolate=yes
+StartLimitIntervalSec=0
+ConditionFileIsExecutable=/usr/local/libexec/vegas/busybox
+
+[Service]
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8
+ExecStart=/usr/local/libexec/vegas/busybox httpd -f -p 192.168.77.1:8080 -h /usr/local/libexec/vegas/www
+Restart=always
+RestartSec=1
+# Commands posted to cgi-bin/command may leave background jobs (return-fastboot does);
+# restarting the server must not kill them, as under native-init.
+KillMode=process
+OOMScoreAdjust=-1000
+# Logs to the journal (journalctl -u vegas-recovery-httpd): a recovery-critical unit must not depend
+# on /var/log/vegas existing.
+
+[Install]
+WantedBy=sysinit.target emergency.target rescue.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Touch boost: Mali OPP pin and CPU frequency floors while touching
+After=vegas-gpu.service
+ConditionPathExists=/run/vegas-gpu-ready
+
+[Service]
+ExecStart=/usr/local/sbin/vegas-gpu-boost
+ExecStopPost=/usr/local/libexec/vegas/systemd/gpu-boost-reset
+Restart=on-failure
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=append:/var/log/vegas/gpu-boost.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

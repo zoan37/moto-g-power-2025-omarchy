@@ -1,0 +1,15 @@
+[Unit]
+Description=Battery percentage: switch MediaTek's fuel gauge to its kernel algorithm
+# native-init started it after GPU preparation; keep vendor module loads in that order.
+After=local-fs.target vegas-gpu.service
+
+[Service]
+Type=exec
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/vegas-fuelgauge
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=append:/var/log/vegas/fuelgauge.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

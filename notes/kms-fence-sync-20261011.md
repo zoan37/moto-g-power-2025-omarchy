@@ -133,3 +133,17 @@ check passes.
 3. A/B test: put `export AQ_KMS_CPU_FENCE_WAIT=0` in
    `~/.config/vegas/drm-debug.env`, reboot, and the skipped lines should
    return.
+
+## On the phone (2026-10-11, night)
+
+- The patched libaquamarine is installed (sha256 3c3308b4…), and Hyprland runs with
+  `AQ_KMS_CPU_FENCE_WAIT=1` (vegas-doctor checks this). The patch's log lines don't show up because
+  Hyprland stops writing debug logs after its config loads.
+- Cost, measured with the synthetic feed at 120 Hz (2×6 swipes): wait off 116.2–116.6 fps, 4.1–4.3% late;
+  **wait on 111.7–114.4 fps, 5.7–8.5% late**. A late frame is less jarring than a half-drawn one, so the
+  wait stays on. Whether it removes the header glitch on X still needs eyes on the phone.
+- **Hyprland on ARM libmali doesn't start:** aquamarine's texture shaders fail to compile on libmali,
+  and Hyprland aborts in `loadGLProc` (libmali's EGL lacks extensions Hyprland requires, e.g. the
+  EGL_EXT_device_* family). It would need EGL shims plus shader ports, for a few points of late frames
+  at most, so it's shelved. `gpu-scanout-probe` (`PROBE_EGL_PLATFORM=gbm`) does pass on libmali, so
+  libmali's GBM scanout itself works.

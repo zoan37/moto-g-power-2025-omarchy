@@ -1,0 +1,21 @@
+#!/bin/bash
+# Power request watcher (vegas-power-request.service), the loop native-init runs:
+# vegas-power (as the desktop user) renames a complete request into
+# $XDG_RUNTIME_DIR/vegas-power-request; root performs the transition with the
+# verified direct-syscall helper (sync + RESTART2), not systemctl.
+helper=/usr/local/libexec/vegas
+request=/run/user/1000/vegas-power-request
+while sleep 2; do
+  [[ -f $request && ! -L $request ]] || continue
+  action=$(head -c 16 "$request")
+  rm -f "$request"
+  case "$action" in
+    reboot|poweroff|fastboot)
+      if "$helper/power-transition" "$action"; then
+        exit 0
+      fi
+      # A rejected shutdown or failed helper must not disable later requests.
+      echo "Power request failed: $action; continuing to watch"
+      ;;
+  esac
+done

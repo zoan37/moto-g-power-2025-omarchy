@@ -1,0 +1,18 @@
+#!/bin/bash
+# Clear the ramdisk's systemd trial strike (vegas-systemd-confirm.service, 60 s after
+# the desktop starts). The ramdisk writes /var/lib/vegas/systemd-pending before it
+# switch_roots into systemd; if it still exists at the next boot, that boot never got
+# here and the ramdisk starts native-init instead (and disables persistent systemd).
+# Confirmed only with both the desktop and the USB recovery channel up.
+set -u
+pending=/var/lib/vegas/systemd-pending
+[[ -e $pending ]] || exit 0
+[[ $(cat /proc/1/comm) == systemd ]] || { echo 'not a systemd boot'; exit 0; }
+listening() {
+  awk '$2 == "014DA8C0:1F90" && $4 == "0A" { found = 1 } END { exit !found }' /proc/net/tcp
+}
+pgrep -x Hyprland >/dev/null || { echo 'systemd boot NOT confirmed: Hyprland is not running'; exit 1; }
+listening || { echo 'systemd boot NOT confirmed: recovery httpd not listening on 192.168.77.1:8080'; exit 1; }
+rm -f "$pending"
+sync
+echo "systemd boot confirmed ($(date -Is))"

@@ -1,0 +1,29 @@
+# Second recovery channel on systemd boots: a root shell on the USB gadget's ACM
+# serial function (the laptop sees /dev/ttyACM0; e.g. `picocom /dev/ttyACM0`). Same
+# trust as the root CGI on the point-to-point USB link. The ramdisk created ttyGS0
+# before switch_root. Equivalent to serial-getty@ttyGS0 with root autologin (own
+# name: the phone update installer accepts no '@' in paths). Kept through
+# emergency/rescue isolation.
+[Unit]
+Description=Root shell on the USB ACM serial port (ttyGS0)
+After=systemd-user-sessions.service
+ConditionPathExists=/dev/ttyGS0
+IgnoreOnIsolate=yes
+
+[Service]
+ExecStart=-/sbin/agetty -o '-p -f -- \\u' --autologin root --keep-baud 115200,57600,38400,9600 - vt220
+Type=idle
+Restart=always
+RestartSec=1
+UtmpIdentifier=ttyGS0
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/ttyGS0
+TTYReset=yes
+TTYVHangup=yes
+IgnoreSIGPIPE=no
+SendSIGHUP=yes
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

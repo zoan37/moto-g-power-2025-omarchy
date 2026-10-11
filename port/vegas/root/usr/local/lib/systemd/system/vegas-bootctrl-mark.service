@@ -1,0 +1,15 @@
+# Android's boot_control HAL normally does this. Once the desktop has stayed up for
+# a minute, mark this slot's boot successful so the bootloader stops spending its
+# tries, and keep the other slot (old stock Android, which would format userdata)
+# out of the fallback order. An early failure still costs a try.
+[Unit]
+Description=Mark this boot slot successful; take the other slot out of the fallback order
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/bin/pgrep -x Hyprland
+ExecStart=-/usr/local/sbin/vegas-bootctrl mark-successful
+ExecStart=-/usr/local/sbin/vegas-bootctrl disable-other
+ExecStart=-/usr/local/sbin/vegas-bootctrl status
+StandardOutput=append:/var/log/vegas/bootctrl.log
+StandardError=inherit

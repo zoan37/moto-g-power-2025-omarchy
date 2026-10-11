@@ -1,0 +1,16 @@
+[Unit]
+Description=Disarm the ramdisk's 180 s desktop-watchdog once the recovery httpd listens
+DefaultDependencies=no
+Wants=vegas-recovery-httpd.service
+After=vegas-recovery-httpd.service
+ConditionPathExists=/run/desktop-watchdog.pid
+IgnoreOnIsolate=yes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/vegas/systemd/watchdog-handoff
+# Logs to the journal (journalctl -u vegas-watchdog-handoff): a recovery-critical unit must not depend
+# on /var/log/vegas existing.
+
+[Install]
+WantedBy=sysinit.target

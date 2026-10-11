@@ -1,0 +1,21 @@
+# Wi-Fi in the background so it never delays the desktop: wifi-up loads the WMT
+# connectivity modules, runs the loader handshake, starts the WMT launcher,
+# wpa_supplicant (user-controllable through wpa_cli / vegas-wifi), dhcpcd and
+# busybox ntpd. They stay in this unit's cgroup after wifi-up exits. The WMT stack
+# is not known to survive a second loader run, so no manual stop/restart.
+# ~/.config/vegas/wifi-off disables it (checked by wifi-up).
+[Unit]
+Description=MT6835 Wi-Fi (WMT modules, wpa_supplicant, dhcpcd, ntpd)
+# native-init started it after GPU preparation; keep vendor module loads in that order.
+After=local-fs.target vegas-gpu.service
+RefuseManualStop=yes
+
+[Service]
+Type=exec
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/vegas/wifi-up
+StandardOutput=append:/var/log/vegas/wifi.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

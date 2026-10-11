@@ -1,0 +1,51 @@
+#!/bin/bash
+# Choose what the ramdisk starts as PID 1 on the next boot: native-init (the Bash
+# supervisor) or systemd. Needs the devtmpfs (tier-1) kernel and the systemd-aware
+# ramdisk (notes/systemd-migration-20261011.md); any other kernel or ramdisk always
+# starts native-init, whatever is set here.
+#
+#   vegas-init status
+#   vegas-init systemd-once   systemd on the next boot only, then native-init again
+#   vegas-init systemd        systemd on every boot; one unconfirmed boot turns it off
+#   vegas-init native         native-init from the next boot
+#
+# A systemd boot is confirmed 60 s after the desktop starts, when Hyprland runs and
+# the recovery httpd listens (vegas-systemd-confirm). The ramdisk writes
+# /var/lib/vegas/systemd-pending before switching to systemd; if it is still there
+# at the next boot, the ramdisk starts native-init and renames /etc/vegas/systemd to
+# systemd.disabled-unstable. A card boot with force-native-init at the microSD's
+# root always starts native-init.
+set -u
+dir=/etc/vegas
+pending=/var/lib/vegas/systemd-pending
+installed=/var/lib/vegas/systemd-setup/installed
+root() { [[ $(id -u) == 0 ]] || { echo 'Run as root.' >&2; exit 1; }; }
+case ${1:-status} in
+  status)
+    printf 'This boot: PID 1 is %s (ramdisk chose %s)\n' "$(cat /proc/1/comm)" \
+      "$(cat /run/vegas-init 2>/dev/null || echo 'native-init; old ramdisk')"
+    grep -qw devtmpfs /proc/filesystems && echo 'Kernel: devtmpfs available' ||
+      echo 'Kernel: no devtmpfs (stock kernel): native-init only'
+    [[ -f $installed ]] && echo 'systemd units: installed (vegas-systemd-setup install)' ||
+      echo 'systemd units: not installed (vegas-systemd-setup install)'
+    if [[ -f $dir/systemd-once ]]; then echo 'Next boot: systemd (once)'
+    elif [[ -f $dir/systemd ]]; then echo 'Next boot: systemd (every boot)'
+    else echo 'Next boot: native-init'; fi
+    [[ -e $pending ]] && echo "Unconfirmed systemd boot pending: $pending"
+    [[ -e $dir/systemd.disabled-unstable ]] &&
+      echo 'systemd was turned off after an unconfirmed boot (vegas-init systemd to retry)'
+    exit 0 ;;
+  systemd|systemd-once)
+    root
+    [[ -f $installed ]] || { echo 'Run vegas-systemd-setup install first.' >&2; exit 1; }
+    mkdir -p "$dir"
+    rm -f "$dir/systemd.disabled-unstable" "$dir/systemd" "$dir/systemd-once"
+    : >"$dir/$1"
+    echo "Next boot: systemd${1#systemd}" ;;
+  native)
+    root
+    rm -f "$dir/systemd" "$dir/systemd-once"
+    echo 'Next boot: native-init' ;;
+  *) echo 'Usage: vegas-init status|systemd-once|systemd|native' >&2; exit 2 ;;
+esac
+sync

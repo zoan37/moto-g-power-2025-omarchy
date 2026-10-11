@@ -1,0 +1,42 @@
+#!/bin/bash
+# GPU desktop selection, Mali preparation and GED tuning for one boot
+# (vegas-gpu.service; native-init's GPU block, unchanged in behaviour).
+# Mali desktop: an explicit one-boot trial, or the persistent mode the user enables
+# with vegas-gpu. Each persistent GPU boot is a strike until it stays up 3 minutes
+# (vegas-gpu-confirm.timer clears it); deliberate power transitions clear it too.
+# Two unconfirmed GPU boots in a row turn GPU mode off so a crash cannot become a
+# boot loop. The touch boost daemon is vegas-gpu-boost.service.
+set -u
+helper=/usr/local/libexec/vegas
+mkdir -p /var/lib/vegas
+gpu=0
+if [[ -f /var/lib/vegas/gpu-trial-once && ! -L /var/lib/vegas/gpu-trial-once ]]; then
+  rm -f /var/lib/vegas/gpu-trial-once
+  gpu=1
+fi
+gpu_flag=/home/omarchy/.config/vegas/gpu-desktop
+strike_file=/var/lib/vegas/gpu-boot-pending
+if [[ -f $gpu_flag && ! -L $gpu_flag ]]; then
+  strikes=$(cat "$strike_file" 2>/dev/null) || strikes=0
+  [[ $strikes =~ ^[0-9]+$ ]] || strikes=0
+  if (( strikes >= 2 )); then
+    mv -f "$gpu_flag" "$gpu_flag.disabled-unstable"
+    rm -f "$strike_file"
+    echo "GPU desktop disabled after $strikes unconfirmed boots; using software."
+  else
+    echo $((strikes + 1)) >"$strike_file"
+    sync
+    gpu=1
+  fi
+fi
+if (( gpu )) && ! timeout -k 2 60 "$helper/gpu-prepare" >>/var/log/vegas/gpu-prepare.log 2>&1; then
+  echo 'GPU preparation failed; using the original software desktop.'
+fi
+# GED's default loading mode (5) averages utilization fields only CSF Malis fill in;
+# on this JM G57 it sees 0% and holds 390 MHz. Mode 0 uses active time. Margin 70
+# raises the clock above ~30% busy (notes/chrome-scrolling-20261010.md).
+if [[ -f /run/vegas-gpu-ready ]]; then
+  echo 0 >/sys/kernel/ged/hal/dvfs_loading_mode
+  echo 70 >/sys/kernel/ged/hal/timer_base_dvfs_margin
+fi
+exit 0

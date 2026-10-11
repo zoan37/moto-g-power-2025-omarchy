@@ -1,0 +1,15 @@
+#!/bin/bash
+# Android-style top-app for the desktop (vegas-sched.service, and again before each
+# desktop start). native-init made /sys/fs/cgroup/top-app itself; under systemd the
+# group is vegas-top.slice, whose CPUWeight= makes systemd enable the cpu controller
+# there. systemd has no property for the Android vendor file
+# cpu.uclamp.latency_sensitive (EAS places wakeups on idle CPUs: CPU-raster scrolling
+# 13% -> 5% late frames), so it is written here. sched_pelt_multiplier = 4 comes from
+# /usr/local/lib/sysctl.d/50-vegas.conf.
+set -u
+cg=$(systemctl show -P ControlGroup vegas-top.slice 2>/dev/null)
+[[ -n $cg ]] || { echo 'vegas-top.slice has no cgroup yet'; exit 1; }
+file=/sys/fs/cgroup$cg/cpu.uclamp.latency_sensitive
+[[ -w $file ]] || { echo "$file missing (cpu controller not enabled on the slice?)"; exit 1; }
+echo 1 >"$file"
+echo "top-app: $file = $(cat "$file")"

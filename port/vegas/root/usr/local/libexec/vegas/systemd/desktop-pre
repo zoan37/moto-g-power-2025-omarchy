@@ -1,0 +1,38 @@
+#!/bin/bash
+# Root preparation before vegas-desktop.service starts the session (ExecStartPre=+):
+# the parts of native-init that ran just before `runuser ... vegas-desktop`.
+set -u
+user=omarchy
+runtime=/run/user/1000
+# Desktop user's device groups (sysusers creates input on systemd boots).
+getent group input >/dev/null || groupadd --system input
+id -nG "$user" | tr ' ' '\n' | grep -qx input && id -nG "$user" | tr ' ' '\n' | grep -qx video ||
+  usermod -aG input,video "$user"
+# logind keeps the lingering user's runtime directory; native-init's fallback.
+if [[ ! -d $runtime ]]; then
+  mkdir -p "$runtime"
+  chown "$user:$user" "$runtime"
+  chmod 0700 "$runtime"
+fi
+# devtmpfs should provide card0; the ramdisk notes the vendor DRM driver may omit
+# the primary node's DEVNAME, so keep the ramdisk/native-init fallback.
+if [[ ! -e /dev/dri/card0 ]] && grep -q '^[[:space:]]*226 drm$' /proc/devices; then
+  mkdir -p /dev/dri
+  mknod /dev/dri/card0 c 226 0 && echo 'card0 created by fallback mknod'
+  chgrp video /dev/dri/card0
+  chmod 0660 /dev/dri/card0
+fi
+# The shell keeps notifications across boots. A card boot's SD warning must not
+# reappear after the next internal-storage boot.
+if [[ $(cut -d' ' -f1 /run/vegas-boot-source 2>/dev/null) != card ]]; then
+  grep -l '"app":"Boot","appIcon":"","summary":"Running from the SD card"' \
+    /home/omarchy/.local/state/omarchy/notifications/*.json 2>/dev/null | xargs -r rm -f --
+fi
+# top-app latency_sensitive (idempotent; vegas-sched.service did it at boot).
+/usr/local/libexec/vegas/systemd/sched-tune || echo 'top-app tuning failed; desktop starts anyway'
+# seatd's socket, as native-init waited for it (up to 5 s).
+for ((attempt=0; attempt<50; attempt++)); do
+  [[ -S /run/seatd.sock ]] && break
+  sleep 0.1
+done
+exit 0

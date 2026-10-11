@@ -1,0 +1,18 @@
+[Unit]
+Description=Mali GPU desktop for this boot (trial/strike logic, gpu-prepare, GED tuning)
+# gpu-prepare runs its EGL smoke test through runuser (PAM, pam_systemd).
+After=local-fs.target systemd-logind.service systemd-user-sessions.service
+Before=vegas-desktop.service vegas-gpu-boost.service
+Wants=vegas-gpu-boost.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# gpu-prepare has its own 60 s timeout and a 90 s reboot watchdog.
+TimeoutStartSec=120
+ExecStart=/usr/local/libexec/vegas/systemd/gpu-boot
+StandardOutput=append:/var/log/vegas/init.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

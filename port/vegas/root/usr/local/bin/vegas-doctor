@@ -41,10 +41,15 @@ faults=$(dmesg 2>/dev/null | grep -c -i -E 'mali.*(fault|hard reset)')
 
 echo "Scheduler"
 [[ $(cat /proc/sys/kernel/sched_pelt_multiplier 2>/dev/null) == 4 ]] && ok "PELT multiplier 4" || warn "PELT multiplier $(cat /proc/sys/kernel/sched_pelt_multiplier 2>/dev/null)"
-if [[ -d /sys/fs/cgroup/top-app ]]; then
-  [[ $(cat /sys/fs/cgroup/top-app/cpu.uclamp.latency_sensitive) == 1 ]] && ok "top-app latency_sensitive" || warn "top-app latency_sensitive off"
+# native-init: /sys/fs/cgroup/top-app; systemd: vegas-top.slice (notes/systemd-migration-20261011.md)
+top=/sys/fs/cgroup/top-app top_name=top-app
+if [[ $(cat /proc/1/comm) == systemd ]]; then
+  top=/sys/fs/cgroup/vegas.slice/vegas-top.slice top_name=vegas-top.slice
+fi
+if [[ -d $top ]]; then
+  [[ $(cat "$top/cpu.uclamp.latency_sensitive") == 1 ]] && ok "$top_name latency_sensitive" || warn "$top_name latency_sensitive off"
   hp=$(pgrep -x Hyprland | head -1)
-  grep -q top-app "/proc/$hp/cgroup" 2>/dev/null && ok "Hyprland in top-app" || warn "Hyprland not in top-app"
+  grep -q "$top_name" "/proc/$hp/cgroup" 2>/dev/null && ok "Hyprland in $top_name" || warn "Hyprland not in $top_name"
 else
   fail "no top-app cgroup"
 fi

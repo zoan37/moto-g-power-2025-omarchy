@@ -1,0 +1,7 @@
+[Unit]
+Description=Clear the GPU desktop boot strike
+ConditionPathExists=/var/lib/vegas/gpu-boot-pending
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'rm -f /var/lib/vegas/gpu-boot-pending; sync'

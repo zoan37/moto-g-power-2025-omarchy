@@ -1,0 +1,8 @@
+#!/bin/bash
+# After vegas-gpu-boost stops or crashes (possibly mid-boost): hand the Mali back to
+# GED and drop the CPU frequency floors, as the daemon does on release.
+echo -1 >/proc/gpufreqv2/fix_target_opp_index 2>/dev/null
+for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+  read -r min <"$policy/cpuinfo_min_freq" 2>/dev/null && echo "$min" >"$policy/scaling_min_freq" 2>/dev/null
+done
+exit 0

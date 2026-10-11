@@ -1,0 +1,17 @@
+[Unit]
+Description=Record this boot's power context (charger boot vs reset) in /var/log/vegas/power
+DefaultDependencies=no
+# init.log needs /var/log/vegas (tmpfiles); still before sysinit.target.
+After=systemd-tmpfiles-setup.service
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+# $$ is a literal $ for the shell (systemd expands $VAR itself).
+ExecStart=/bin/sh -c 'echo "VEGAS_SYSTEMD_PID1 boot-source=$$(cat /run/vegas-boot-source 2>/dev/null)"; uname -a'
+ExecStart=/usr/local/libexec/vegas/power-boot-report
+StandardOutput=append:/var/log/vegas/init.log
+StandardError=inherit
+
+[Install]
+WantedBy=sysinit.target
