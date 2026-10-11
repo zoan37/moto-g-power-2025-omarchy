@@ -16,4 +16,6 @@ for m in hf_manager sensorhub; do
 done
 for _ in $(seq 1 20); do [[ -c /dev/hf_manager ]] && break; sleep 0.5; done
 [[ -c /dev/hf_manager ]] || { echo 'no /dev/hf_manager'; exit 1; }
+# The desktop's auto-rotate reads the accelerometer as the user (group input).
+chgrp input /dev/hf_manager && chmod 0660 /dev/hf_manager
 echo 'sensor hub ready'

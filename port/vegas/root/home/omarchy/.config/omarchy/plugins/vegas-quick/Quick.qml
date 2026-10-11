@@ -16,8 +16,9 @@ import qs.Ui
 //   time, date                         battery, charging, temperature
 //   [ Wi-Fi ]          [ Bluetooth ]
 //   [ Do Not Disturb ] [ Airplane mode ]
-//   [ Keyboard ]       [ Screenshot ]
+//   [ Auto-rotate ]    [ Screenshot ]
 //   [ Omarchy ]        [ Power ]
+// (the keyboard has its own nav-bar button)
 //   brightness ───────●──────   (icon: adaptive brightness on/off)
 //   volume     ─────●────────  Speaker
 //   (Wi-Fi networks, when the Wi-Fi tile is tapped)
@@ -50,6 +51,7 @@ Item {
   property real batteryTemp: 0
   property string wifiState: ""
   property bool autoBrightness: true
+  property bool autoRotate: false
   property var networks: []
   property var notifications: []
 
@@ -124,6 +126,7 @@ Item {
       "echo \"sink=$(wpctl inspect @DEFAULT_AUDIO_SINK@ 2>/dev/null | sed -n 's/.*node.description = \"\\(.*\\)\"/\\1/p' | head -1)\"\n" +
       "echo \"wifi=$(wpa_cli -i wlan0 status 2>/dev/null | sed -n 's/^wpa_state=//p')\"\n" +
       "echo \"auto=$(cat \"$HOME/.config/vegas/auto-brightness\" 2>/dev/null || echo on)\"\n" +
+      "echo \"rotate=$(cat \"$HOME/.config/vegas/auto-rotate\" 2>/dev/null || echo off)\"\n" +
       "vegas-wifi list 2>/dev/null | sed 's/^/net=/'\n" +
       "ls -1t \"$1\"/*.json 2>/dev/null | head -5 | while read -r f; do printf 'note=%s\\n' \"$(head -1 \"$f\")\"; done",
       "--", root.historyDir]
@@ -167,6 +170,8 @@ Item {
         root.wifiState = value
       } else if (key === "auto") {
         root.autoBrightness = value.trim() !== "off"
+      } else if (key === "rotate") {
+        root.autoRotate = value.trim() === "on"
       } else if (key === "net") {
         root.parseNetwork(value, nets)
       } else if (key === "note") {
@@ -229,6 +234,13 @@ Item {
     root.autoBrightness = !root.autoBrightness
     root.run(["bash", "-c", "mkdir -p \"$HOME/.config/vegas\" && echo " + (root.autoBrightness ? "on" : "off")
               + " > \"$HOME/.config/vegas/auto-brightness\""])
+  }
+
+  // Auto-rotate (vegas-autorotate follows the accelerometer while "on").
+  function toggleAutoRotate() {
+    root.autoRotate = !root.autoRotate
+    root.run(["bash", "-c", "mkdir -p \"$HOME/.config/vegas\" && echo " + (root.autoRotate ? "on" : "off")
+              + " > \"$HOME/.config/vegas/auto-rotate\""])
   }
 
   function toggleMute() {
@@ -496,7 +508,7 @@ Item {
               model: [
                 { key: "wifi" }, { key: "bluetooth" },
                 { key: "dnd" }, { key: "airplane" },
-                { key: "keyboard" }, { key: "screenshot" },
+                { key: "rotate" }, { key: "screenshot" },
                 { key: "menu" }, { key: "power" }
               ]
 
@@ -507,10 +519,12 @@ Item {
                 readonly property bool on: key === "wifi" ? root.wifiConnected
                   : key === "bluetooth" ? root.btOn
                   : key === "airplane" ? root.airplane
+                  : key === "rotate" ? root.autoRotate
                   : key === "dnd" ? root.dnd : false
                 readonly property string title: key === "wifi" ? "Wi-Fi"
                   : key === "bluetooth" ? "Bluetooth"
                   : key === "airplane" ? "Airplane mode"
+                  : key === "rotate" ? "Auto-rotate"
                   : key === "dnd" ? "Do Not Disturb"
                   : key === "keyboard" ? "Keyboard"
                   : key === "screenshot" ? "Screenshot"
@@ -521,6 +535,7 @@ Item {
                   : key === "bluetooth" ? (!root.btAdapter ? "Unavailable" : !root.btOn ? "Off"
                                            : root.btDevice !== "" ? root.btDevice : "On")
                   : key === "airplane" ? (root.airplane ? "On" : "Off")
+                  : key === "rotate" ? (root.autoRotate ? "On" : "Portrait")
                   : key === "dnd" ? (root.dnd ? "On" : "Off")
                   : key === "keyboard" ? "Show / hide"
                   : key === "screenshot" ? "Whole screen"
@@ -530,6 +545,7 @@ Item {
                                  ? root.wifiGlyphs[root.signalBars(root.currentNetwork.dbm)] : 0xf05aa)
                   : key === "bluetooth" ? root.glyph(root.btDevice !== "" ? 0xf00b1 : root.btOn ? 0xf00af : 0xf00b2)
                   : key === "airplane" ? root.glyph(0xf001d)
+                  : key === "rotate" ? root.glyph(root.autoRotate ? 0xf0885 : 0xf0886)
                   : key === "dnd" ? root.glyph(root.dnd ? 0xf009b : 0xf009a)
                   : key === "keyboard" ? root.glyph(0xf030c)
                   : key === "screenshot" ? root.glyph(0xf0100)
@@ -596,6 +612,7 @@ Item {
                       if (held) root.btToggle()
                       else root.btDevices()
                     } else if (k === "airplane") root.airplaneToggle()
+                    else if (k === "rotate") root.toggleAutoRotate()
                     else if (k === "dnd") root.toggleDnd()
                     else if (k === "keyboard") root.toggleKeyboard()
                     else if (k === "screenshot") root.screenshot()

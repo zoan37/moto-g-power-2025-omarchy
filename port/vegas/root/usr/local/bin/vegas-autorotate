@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Auto-rotate like a phone: follow the accelerometer between portrait and the
+two landscapes (no upside-down portrait, as on most Android phones).
+
+Off unless ~/.config/vegas/auto-rotate says "on" (the quick-settings tile);
+turning it off returns to portrait. Reads the sensor hub's accelerometer
+(/dev/hf_manager, Android type 1, m/s^2 x 1000) only while the screen is on.
+
+Hyprland rotates the output but not touch input (tested: taps land where the
+portrait coordinates would be), so input:touchdevice:transform is set to the
+same transform. Transform 1 puts the UI's bottom edge along the phone's right
+side: that is the phone turned clockwise (right side down, gravity along -x).
+Runs in the desktop session (autostart.lua).
+"""
+import json
+import os
+import select
+import struct
+import subprocess
+import time
+
+HF = '/dev/hf_manager'
+ACCEL = 1
+EVENT = 76
+SETTING = os.path.expanduser('~/.config/vegas/auto-rotate')
+SCREEN_OFF = os.path.join(os.environ.get('XDG_RUNTIME_DIR', '/run/user/1000'), 'vegas-screen-off')
+OUTPUT = 'DSI-1'
+G_ON = 6500          # an axis carries most of gravity (m/s^2 x 1000)
+G_FLAT = 8500        # |z| above this: lying flat, keep the current rotation
+STABLE_S = 0.6
+
+
+def log(*args):
+    print(time.strftime('%H:%M:%S'), *args, flush=True)
+
+
+def enabled():
+    try:
+        with open(SETTING) as f:
+            return f.read().strip() == 'on'
+    except OSError:
+        return False
+
+
+def hyprctl(*args):
+    return subprocess.run(['hyprctl', *args], capture_output=True, text=True).stdout
+
+
+def current_transform():
+    try:
+        for m in json.loads(hyprctl('-j', 'monitors')):
+            if m.get('name') == OUTPUT:
+                return m
+    except ValueError:
+        pass
+    return None
+
+
+def rotate(transform):
+    m = current_transform()
+    if not m or m.get('transform') == transform:
+        return
+    mode = '%dx%d@%.3f' % (m['width'], m['height'], m['refreshRate'])
+    hyprctl('eval', 'hl.monitor({ output = "%s", mode = "%s", position = "0x0", scale = %s, transform = %d }); '
+            'hl.config({ input = { touchdevice = { transform = %d } } })'
+            % (OUTPUT, mode, m['scale'], transform, transform))
+    log('transform', transform)
+
+
+def orientation(x, y, z):
+    if abs(z) > G_FLAT:
+        return None
+    if y > G_ON and abs(x) < y * 0.6:
+        return 0                      # upright portrait
+    if x < -G_ON and abs(y) < -x * 0.6:
+        return 1                      # turned clockwise (right side down)
+    if x > G_ON and abs(y) < x * 0.6:
+        return 3                      # turned counter-clockwise (left side down)
+    return None
+
+
+def sensor(fd, on):
+    data = struct.pack('<qq', 200_000_000, 0)            # 5 Hz
+    os.write(fd, struct.pack('<BBBx', ACCEL, 1 if on else 0, len(data)) + data + bytes(48 - len(data)))
+
+
+def main():
+    fd = os.open(HF, os.O_RDWR | os.O_NONBLOCK)
+    active = False
+    candidate, since = None, 0.0
+    was_enabled = enabled()
+    while True:
+        on = enabled()
+        if was_enabled and not on:
+            rotate(0)                 # auto-rotate turned off: back to portrait
+        was_enabled = on
+        want = on and not os.path.exists(SCREEN_OFF)
+        if want != active:
+            sensor(fd, want)
+            active = want
+            candidate = None
+        ready, _, _ = select.select([fd], [], [], 0.5 if active else 2.0)
+        if not ready:
+            continue
+        try:
+            buf = os.read(fd, EVENT * 32)
+        except BlockingIOError:
+            continue
+        for i in range(0, len(buf) - EVENT + 1, EVENT):
+            _, kind, _, action = struct.unpack_from('<qBBBx', buf, i)
+            if kind != ACCEL or action != 0:
+                continue
+            o = orientation(*struct.unpack_from('<3i', buf, i + 12))
+            now = time.monotonic()
+            if o != candidate:
+                candidate, since = o, now
+            elif o is not None and now - since >= STABLE_S:
+                rotate(o)
+                since = now + 3600    # applied; wait for the next change
+
+
+if __name__ == '__main__':
+    main()
