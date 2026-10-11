@@ -1,0 +1,55 @@
+#!/bin/bash
+# Keep the pinned Hyprland bundle (/opt/omarchy-android: Hyprland 0.56 +
+# patched aquamarine) working across `pacman -Syu`.
+#
+# The bundle links against system libraries whose sonames Arch bumps often
+# (libhyprutils.so.13, libhyprlang.so.2, libhyprgraphics.so.4, libre2.so.11,
+# libdisplay-info.so.3, ...). After such an upgrade the old .so is gone and the
+# compositor would not start. This copies every library the bundle resolves from
+# /usr/lib (except glibc/libstdc++, which must match the system, and the GPU
+# stack in /opt) into $PIN, points the bundle's binaries at it with RUNPATH, and
+# gives the pinned copies RUNPATH=$ORIGIN so their own dependencies come from
+# there too. The rest of the system keeps upgrading normally.
+#
+#   vegas-pin-desktop-libs check   what each bundle binary would load from where
+#   vegas-pin-desktop-libs apply   snapshot the libraries and set the RUNPATHs
+set -euo pipefail
+B=/opt/omarchy-android
+PIN=$B/pinned-libs
+RUNTIME_LD=$B/aquamarine/lib:/opt/vegas-gpu/mesa-kbase/lib
+ELFS=("$B"/hyprland/bin/Hyprland "$B"/hyprland/bin/hyprctl "$B"/hyprland/bin/hyprpm "$B"/aquamarine/lib/libaquamarine.so.13)
+# Stay system-wide: glibc and the GCC/C++ runtimes (must match ld.so), udev/systemd
+# (talk to the running daemons), and the GL/Vulkan dispatch libraries (must match
+# the GPU stack in /opt and the system's Vulkan driver manifests).
+KEEP_SYSTEM='^(ld-linux-aarch64|libc|libm|libdl|libpthread|librt|libresolv|libutil|libstdc[+][+]|libgcc_s|libgomp|libudev|libsystemd|libGLX|libGLdispatch|libOpenGL|libEGL|libGLESv2|libvulkan)[.]so'
+
+deps() { # every /usr/lib library the bundle resolves at runtime
+  for e in "${ELFS[@]}"; do
+    # sonames only: the loader itself appears as a path (/lib/ld-linux-aarch64.so.1).
+    LD_LIBRARY_PATH=$RUNTIME_LD ldd "$e" | awk '$2 == "=>" && $1 !~ /\// && $3 ~ /^\/usr\/lib\// {print $1, $3}'
+  done | sort -u | awk -v keep="$KEEP_SYSTEM" '$1 !~ keep'
+}
+
+case ${1:-check} in
+  check)
+    for e in "${ELFS[@]}"; do
+      echo "== $e (RUNPATH: $(patchelf --print-rpath "$e"))"
+      LD_LIBRARY_PATH=$RUNTIME_LD ldd "$e" | grep -E 'not found|=> /usr/lib/|=> /opt' | sed 's/ (0x.*//' | sort | uniq
+    done ;;
+  apply)
+    rm -rf "$PIN.new"; mkdir -p "$PIN.new"
+    deps | while read -r soname path; do
+      cp -L "$path" "$PIN.new/$soname"
+    done
+    for lib in "$PIN.new"/*; do patchelf --set-rpath '$ORIGIN' "$lib"; done
+    rm -rf "$PIN.old"; [[ -d $PIN ]] && mv "$PIN" "$PIN.old"
+    mv "$PIN.new" "$PIN"
+    # A running binary can't be rewritten in place ("Text file busy"): patch a
+    # copy and rename it over (the running process keeps the old inode).
+    for e in "${ELFS[@]}"; do
+      cp -p "$e" "$e.pin-new" && patchelf --set-rpath "$PIN" "$e.pin-new" && mv -f "$e.pin-new" "$e"
+    done
+    rm -rf "$PIN.old"
+    echo "pinned $(ls "$PIN" | wc -l) libraries ($(du -sh "$PIN" | cut -f1)) into $PIN" ;;
+  *) echo 'usage: vegas-pin-desktop-libs check|apply' >&2; exit 2 ;;
+esac
