@@ -63,6 +63,38 @@ def main():
     layout += '\n/* Vegas: a number row plus the four-row mobile layout. */\nstatic struct key keys_phone[] = {\n' + phone + '\n};\n'
     layout += '\n/* Vegas: phone-style four rows without a number row. */\nstatic struct key keys_mobile[] = {\n' + mobile + '\n};\n'
     layout_file.write_text(layout)
+    # Haptic tick on every key press, like Gboard: the phone's Awinic LRA through
+    # the LED class (/sys/class/leds/vibrator, writable by group input). Writes
+    # are queued by the driver (~0.03 ms). VEGAS_KEYBOARD_HAPTIC_MS sets the
+    # length (default 12 ms, 0 = off); no vibrator, no effect.
+    keyboard_file = work / 'keyboard.c'
+    kb = keyboard_file.read_text()
+    kb = replace_once(kb, 'void\nkbd_press_key(struct kbd *kb, struct key *k, uint32_t time)\n{\n',
+        '#include <fcntl.h>\n#include <stdlib.h>\n#include <string.h>\n#include <unistd.h>\n\n'
+        'static void\nvegas_haptic_tick(void)\n{\n'
+        '    static int duration = -2, activate = -1;\n'
+        '    static char ms[8] = "12";\n'
+        '    if (duration == -2) {\n'
+        '        const char *env = getenv("VEGAS_KEYBOARD_HAPTIC_MS");\n'
+        '        duration = -1;\n'
+        '        if (env) {\n'
+        '            int value = atoi(env);\n'
+        '            if (value <= 0)\n'
+        '                return;\n'
+        '            snprintf(ms, sizeof(ms), "%d", value > 60 ? 60 : value);\n'
+        '        }\n'
+        '        duration = open("/sys/class/leds/vibrator/duration", O_WRONLY | O_CLOEXEC);\n'
+        '        activate = open("/sys/class/leds/vibrator/activate", O_WRONLY | O_CLOEXEC);\n'
+        '        if (duration < 0 || activate < 0)\n'
+        '            duration = -1;\n'
+        '    }\n'
+        '    if (duration >= 0 && pwrite(duration, ms, strlen(ms), 0) > 0)\n'
+        '        (void)!pwrite(activate, "1", 1, 0);\n'
+        '}\n\n'
+        'void\nkbd_press_key(struct kbd *kb, struct key *k, uint32_t time)\n{\n'
+        '    vegas_haptic_tick();\n')
+    keyboard_file.write_text(kb)
+
     main_file = work / 'main.c'
     text = main_file.read_text()
     text = replace_once(text, 'static uint32_t height, normal_height, landscape_height;',

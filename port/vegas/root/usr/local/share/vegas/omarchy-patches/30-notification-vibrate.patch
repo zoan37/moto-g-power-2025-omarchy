@@ -1,0 +1,16 @@
+# Phone: vibrate (vegas-vibrate notify) when a notification pops up, unless DND, ephemeral or low urgency.
+diff -ru a/shell/plugins/notifications/Service.qml b/shell/plugins/notifications/Service.qml
+--- a/shell/plugins/notifications/Service.qml	2026-10-11 13:29:06.046415484 -0400
++++ b/shell/plugins/notifications/Service.qml	2026-10-11 13:29:06.071554410 -0400
+@@ -183,6 +183,11 @@
+       return
+     }
+ 
++    // Phone (vegas): vibrate for notifications that show, like Android, except
++    // Omarchy's own action toasts / bare notify-send (ephemeral) and low urgency.
++    if (!isEphemeral(notification) && notification.urgency !== NotificationUrgency.Low)
++      Quickshell.execDetached(["/usr/local/bin/vegas-vibrate", "notify"])
++
+     persistPopupFile(snapshot)
+     watchForUpdates(notification, snapshot)
+     // Qt.callLater avoids "QV4::Object::insertMember" crashes when a

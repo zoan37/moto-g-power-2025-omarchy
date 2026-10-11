@@ -1,0 +1,15 @@
+#!/bin/bash
+# vegas-vibrate [tick|notify|long|MS]: vibrate the phone (Awinic LRA via
+# /sys/class/leds/vibrator). Silent no-op without the vibrator or with
+# ~/.config/vegas/haptics set to "off".
+v=/sys/class/leds/vibrator
+[[ -w $v/activate ]] || exit 0
+[[ $(cat "${HOME:-/home/omarchy}/.config/vegas/haptics" 2>/dev/null) == off ]] && exit 0
+buzz() { echo "$1" >"$v/duration" && echo 1 >"$v/activate"; }
+case ${1:-tick} in
+  tick) buzz 15 ;;
+  notify) buzz 45; sleep 0.15; buzz 45 ;;
+  long) buzz 300 ;;
+  [0-9]*) buzz $(( $1 > 2000 ? 2000 : $1 )) ;;
+  *) echo 'usage: vegas-vibrate [tick|notify|long|MS]' >&2; exit 2 ;;
+esac

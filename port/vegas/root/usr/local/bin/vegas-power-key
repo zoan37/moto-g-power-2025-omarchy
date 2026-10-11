@@ -109,6 +109,7 @@ def keep_awake():
 
 
 def power_menu():
+    subprocess.Popen(['/usr/local/bin/vegas-vibrate', 'tick'])     # Android's long-press tick
     if not screen_on():
         set_screen(True)
     subprocess.Popen(['omarchy-menu', 'toggle', 'system'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

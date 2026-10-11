@@ -20,7 +20,7 @@ ours=(
   vegas-power-boot-report.service vegas-loop-dio.service vegas-thermal-guard.service
   vegas-power-request.service vegas-persistent-guard.timer
   vegas-gpu.service vegas-gpu-boost.service vegas-gpu-confirm.timer
-  vegas-video.service vegas-audio.service vegas-bluetooth.service vegas-sensors.service vegas-autobrightness.service vegas-autosleep.service vegas-fuelgauge.service vegas-wifi.service
+  vegas-video.service vegas-audio.service vegas-bluetooth.service vegas-sensors.service vegas-autobrightness.service vegas-haptics.service vegas-autosleep.service vegas-fuelgauge.service vegas-wifi.service
   vegas-sched.service vegas-seatd.service vegas-desktop.service
   vegas-serial-shell.service
 )

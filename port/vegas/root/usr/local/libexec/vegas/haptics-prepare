@@ -1,0 +1,18 @@
+#!/bin/bash
+# Vibration motor (vegas-haptics.service): Awinic AW862xx LRA on I2C 11-005a,
+# vendor driver aw862x_haptic_nv_v1.ko with its waveform files
+# (/usr/lib/firmware/aw862x*_haptic.bin, from the vendor partition). It shows up
+# as /sys/class/leds/vibrator: write milliseconds to duration, then 1 to
+# activate. The desktop (keyboard ticks, vegas-vibrate) drives it as group input.
+# Opt out with /var/lib/vegas/no-haptics.
+set -u
+[[ -e /var/lib/vegas/no-haptics ]] && { echo 'haptics disabled by no-haptics'; exit 0; }
+[[ -d /sys/module/aw862x_haptic_nv_v1 ]] ||
+  timeout -k 2 20 insmod /opt/vegas-haptics/modules/aw862x_haptic_nv_v1.ko || { echo 'insmod failed'; exit 1; }
+v=/sys/class/leds/vibrator
+for _ in $(seq 1 20); do [[ -e $v/activate ]] && break; sleep 0.5; done
+[[ -e $v/activate ]] || { echo 'no vibrator after 10 s'; exit 1; }
+for a in duration activate state index activate_mode gain; do
+  [[ -e $v/$a ]] && chgrp input "$v/$a" && chmod 0664 "$v/$a"
+done
+echo "vibrator ready (f0 $(cat $v/f0))"

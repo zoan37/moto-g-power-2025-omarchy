@@ -1,0 +1,14 @@
+# Vibration motor: Awinic haptic driver + permissions (/usr/local/libexec/vegas/haptics-prepare).
+[Unit]
+Description=Vibration motor (Awinic AW862xx)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/vegas/haptics-prepare
+StandardOutput=append:/var/log/vegas/haptics.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target
