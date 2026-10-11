@@ -6,7 +6,9 @@ Hyprland's own XF86PowerOff binding (Omarchy: system menu on every press) and
 its key/mouse-wakes-the-screen options are off on the phone (hyprland.lua), so
 this daemon alone decides when the panel is on. With the panel off, the TDDI
 touch controller is reset with it, so stray touches don't reach apps. A key
-from the panel's "double-tap" gesture device wakes the screen too.
+from the panel's "double-tap" gesture device wakes the screen too. While the
+screen is off, $XDG_RUNTIME_DIR/vegas-screen-off lets the root autosleep
+service suspend the phone; the power key wakes it (wakeup-source in the DT).
 Runs in the desktop session (autostart.lua).
 """
 import fcntl
@@ -53,8 +55,21 @@ def screen_on():
         return True
 
 
+# While this file exists the root autosleep service suspends the phone
+# (/usr/local/libexec/vegas/autosleep); its mtime is when the screen went off.
+SCREEN_OFF = os.path.join(os.environ.get('XDG_RUNTIME_DIR', '/run/user/1000'), 'vegas-screen-off')
+
+
 def set_screen(on):
+    if on:
+        try:
+            os.unlink(SCREEN_OFF)
+        except FileNotFoundError:
+            pass
     hyprctl('dispatch', 'hl.dsp.dpms({ action = "%s" })' % ('enable' if on else 'disable'))
+    if not on:
+        with open(SCREEN_OFF, 'w'):
+            pass
     log('screen', 'on' if on else 'off')
 
 
@@ -80,6 +95,8 @@ def main():
         sys.exit('mtk-pmic-keys not found')
     tap = open_device(b'double-tap')
     fds = [power] + ([tap] if tap is not None else [])
+    if screen_on() and os.path.exists(SCREEN_OFF):
+        os.unlink(SCREEN_OFF)       # stale, from a previous session
     pressed_at = None        # monotonic time of the current power key press
     long_fired = False
     while True:

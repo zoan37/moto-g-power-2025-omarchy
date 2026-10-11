@@ -164,6 +164,9 @@ fi
 # Sound card (vendor audio modules + speaker calibration), in the background.
 "$helper/audio-prepare" >>/var/log/vegas/audio.log 2>&1 &
 
+# Sleep while the screen is off (vegas-power-key marks it), like Android.
+"$helper/autosleep" >>/var/log/vegas/autosleep.log 2>&1 &
+
 # Battery percentage: switch MediaTek's fuel gauge from waiting for Android's
 # daemon to its kernel algorithm.
 /usr/local/sbin/vegas-fuelgauge >>/var/log/vegas/fuelgauge.log 2>&1 &

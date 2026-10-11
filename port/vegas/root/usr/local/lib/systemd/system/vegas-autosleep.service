@@ -1,0 +1,15 @@
+# Suspend (s2idle) while the screen is off, like Android's autosleep; see
+# /usr/local/libexec/vegas/autosleep for the rules and inhibitors.
+[Unit]
+Description=Sleep while the screen is off (s2idle)
+After=local-fs.target vegas-desktop.service
+
+[Service]
+ExecStart=/usr/local/libexec/vegas/autosleep
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/vegas/autosleep.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

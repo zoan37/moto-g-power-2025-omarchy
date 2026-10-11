@@ -1,0 +1,71 @@
+#!/bin/bash
+# Android-style autosleep (vegas-autosleep.service, root). While the desktop's
+# screen is off (vegas-power-key keeps $request in place), suspend to s2idle,
+# the only mem_sleep state this kernel has, as on Android. Any wake that isn't
+# the power key (charger alarm, battery gauge, RTC) finds the screen still off
+# and goes back to sleep after a short grace period; a power key press makes
+# vegas-power-key switch the screen on and remove $request.
+#
+# Stays awake while:
+#   - /var/lib/vegas/no-suspend exists (opt out)
+#   - USB data is connected (the gadget is configured: the laptop's recovery
+#     endpoint and development; a plain charger still lets it sleep)
+#   - a sound card PCM is running (music with the screen off)
+#   - vegas-power-key isn't running (nothing could turn the screen back on)
+# Log: /var/log/vegas/autosleep.log (one line per sleep, with the wake reason).
+set -u
+request=/run/user/1000/vegas-screen-off
+delay=${VEGAS_SLEEP_DELAY:-5}      # seconds of screen-off before the first sleep
+grace=${VEGAS_SLEEP_GRACE:-2}      # seconds awake after a wake that isn't the power key
+
+log() { printf '%s %s\n' "$(date +%T)" "$*"; }
+
+inhibitor() {
+  [[ -e /var/lib/vegas/no-suspend ]] && { echo 'no-suspend file'; return; }
+  local u
+  # VEGAS_SLEEP_IGNORE_USB=1: for testing the sleep loop over the USB link.
+  [[ ${VEGAS_SLEEP_IGNORE_USB:-0} == 1 ]] ||
+  for u in /sys/class/udc/*/state; do
+    [[ $(cat "$u" 2>/dev/null) == configured ]] && { echo 'USB data connected'; return; }
+  done
+  grep -qs RUNNING /proc/asound/card*/pcm*p/sub*/status && { echo 'audio playing'; return; }
+  pgrep -f /usr/local/bin/vegas-power-key >/dev/null || { echo 'vegas-power-key not running'; return; }
+}
+
+# One suspend. MediaTek's checkers refuse now and then (an alarm timer due
+# within 2 s, a clock still on): retry a few times like Android's autosleep.
+sleep_once() {
+  local try since
+  since=$(date +%s)
+  for try in 1 2 3 4 5; do
+    [[ -e $request ]] || return 1
+    if echo mem >/sys/power/state 2>/dev/null; then
+      local wake
+      wake=$(journalctl -k -o cat --no-pager -S "@$since" 2>/dev/null | sed -n 's/.*Resume caused by //p' | tail -1)
+      log "slept $(( $(date +%s) - since ))s, woke: ${wake:-unknown}"
+      return 0
+    fi
+    sleep 1
+  done
+  log "suspend refused 5 times: $(head -1 /sys/power/suspend_stats/last_failed_dev) $(head -1 /sys/power/suspend_stats/last_failed_step)"
+  return 1
+}
+
+last_reason=''
+while sleep 1; do
+  if [[ ! -e $request ]]; then
+    last_reason=''
+    continue
+  fi
+  (( $(date +%s) - $(stat -c %Y "$request" 2>/dev/null || date +%s) >= delay )) || continue
+  reason=$(inhibitor)
+  if [[ -n $reason ]]; then
+    [[ $reason != "$last_reason" ]] && log "screen off, staying awake: $reason"
+    last_reason=$reason
+    continue
+  fi
+  last_reason=''
+  sleep_once || { sleep 5; continue; }
+  # The power key, if that's what woke us, reaches vegas-power-key now.
+  sleep "$grace"
+done
