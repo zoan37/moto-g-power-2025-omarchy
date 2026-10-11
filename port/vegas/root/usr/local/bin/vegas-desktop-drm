@@ -23,6 +23,11 @@ if [[ -f /run/vegas-gpu-ready && -c /dev/mali0 ]]; then
   export LD_LIBRARY_PATH=/opt/omarchy-android/aquamarine/lib:/opt/vegas-gpu/mesa-kbase/lib
   export LIBGL_DRIVERS_PATH=/opt/vegas-gpu/mesa-kbase/lib/dri
   export HYPRLAND_EGL_SURFACELESS=1
+  # kbase has no implicit sync and mediatek-drm ignores IN_FENCE_FD: make the
+  # patched Aquamarine wait for Hyprland's render fence before each KMS commit
+  # (port/vegas/patches/aquamarine-kms-cpu-fence-wait.patch; ignored by the
+  # stock library). notes/kms-fence-sync-20261011.md
+  export AQ_KMS_CPU_FENCE_WAIT=1
   gpu_mode=mali
 fi
 export AQ_DRM_DEVICES=/dev/dri/card0 AQ_NO_MODIFIERS=1

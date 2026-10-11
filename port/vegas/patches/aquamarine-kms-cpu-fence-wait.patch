@@ -1,0 +1,132 @@
+aquamarine: optionally CPU-wait on the render fence before KMS commits
+
+Base: aquamarine a79fb21b (v0.14.0) + omarchy-android
+patches/aquamarine/0001-wayland-carry-proven-Android-KGSL-buffer-pipeline.patch
+(the library shipped in /opt/omarchy-android/aquamarine on vegas).
+
+vegas (MT6835): mali_kbase attaches no dma_resv fences to shared dma-bufs and
+the vendor mediatek_v2 KMS driver never waits on a plane's IN_FENCE_FD
+(mtk_fb_wait()'s dma_resv wait is commented out; mediatek-drm.ko imports no
+dma_fence_wait*/drm_atomic_helper_wait_for_fences). A frame Hyprland has just
+submitted to the GPU can therefore be scanned out half-rendered.
+
+Hyprland 0.56.1 already exports an EGL_ANDROID_native_fence_sync fd for each
+frame (endRender -> setExplicitInFence) whenever the EGL display has the
+extension, but aquamarine only forwards it when the DRM device has syncobj
+timelines.
+
+AQ_KMS_CPU_FENCE_WAIT=1: before a real (non-test) commit with a buffer,
+poll() the consumer's in-fence (bounded at 100 ms). Logs a summary every 600
+frames ("drm: KMS CPU fence wait: ...").
+AQ_KMS_FENCE_WITHOUT_TIMELINES=1: report supportsExplicit (and attach
+IN_FENCE_FD) when the CRTC/plane expose OUT_FENCE_PTR/IN_FENCE_FD even without
+timelines. Correct for drivers that honour IN_FENCE_FD; NOT sufficient on vegas.
+Both default off, so other hardware is unaffected. Also adds <cmath>, which
+GCC 16 needs for std::round in DRM.cpp.
+
+diff --git i/src/backend/drm/DRM.cpp w/src/backend/drm/DRM.cpp
+index a584614..33899b3 100644
+--- i/src/backend/drm/DRM.cpp
++++ w/src/backend/drm/DRM.cpp
+@@ -17,6 +17,9 @@
+ #include <filesystem>
+ #include <system_error>
+ #include <sys/mman.h>
++#include <poll.h>
++#include <cerrno>
++#include <cmath>
+ #include <fcntl.h>
+ #include <unistd.h>
+ extern "C" {
+@@ -45,6 +48,55 @@ using namespace Hyprutils::Memory;
+ using namespace Hyprutils::Math;
+ #define SP CSharedPointer
+ 
++// Some KMS stacks (e.g. the MediaTek mediatek_v2 vendor driver with ARM's
++// mali_kbase) have neither implicit dma-buf fencing nor a KMS driver that waits
++// on a plane's IN_FENCE_FD, so a freshly rendered buffer can be scanned out
++// before the GPU has finished writing it. With AQ_KMS_CPU_FENCE_WAIT=1, block
++// (bounded) on the consumer's render fence before the buffer is handed to KMS.
++static constexpr int KMS_CPU_FENCE_WAIT_TIMEOUT_MS = 100;
++
++static void cpuWaitForInFence(SP<CBackend> backend, const std::string& outputName, int fenceFD) {
++    static uint64_t frames = 0, blocked = 0, timeouts = 0, totalWaitUs = 0, maxWaitUs = 0;
++
++    pollfd     pfd     = {.fd = fenceFD, .events = POLLIN, .revents = 0};
++    const auto started = std::chrono::steady_clock::now();
++    int        ret     = poll(&pfd, 1, 0);
++
++    if (ret == 0) {
++        ++blocked;
++        const auto deadline = started + std::chrono::milliseconds(KMS_CPU_FENCE_WAIT_TIMEOUT_MS);
++        while (true) {
++            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
++            if (left <= 0) {
++                ret = 0;
++                break;
++            }
++            ret = poll(&pfd, 1, (int)left + 1);
++            if (ret < 0 && errno == EINTR)
++                continue;
++            break;
++        }
++    }
++
++    const uint64_t waitedUs = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
++    totalWaitUs += waitedUs;
++    maxWaitUs = std::max(maxWaitUs, waitedUs);
++    ++frames;
++
++    if (ret == 0) {
++        ++timeouts;
++        backend->log(AQ_LOG_WARNING, std::format("drm: render fence on {} not signalled after {} ms, committing anyway", outputName, KMS_CPU_FENCE_WAIT_TIMEOUT_MS));
++    } else if (ret < 0)
++        backend->log(AQ_LOG_WARNING, std::format("drm: poll on render fence for {} failed: {}", outputName, strerror(errno)));
++
++    if (frames % 600 == 0) {
++        backend->log(AQ_LOG_DEBUG,
++                     std::format("drm: KMS CPU fence wait: {} frames, render unfinished at commit in {}, avg wait {} us, max {} us, timeouts {}", frames, blocked,
++                                 totalWaitUs / frames, maxWaitUs, timeouts));
++        maxWaitUs = 0;
++    }
++}
++
+ static bool shouldSubmitCTM(SP<SDRMConnector> connector, const COutputState::SInternalState& state, bool modeset) {
+     if (state.committed & COutputState::AQ_OUTPUT_STATE_CTM)
+         return true;
+@@ -1735,7 +1787,11 @@ void Aquamarine::SDRMConnector::recheckCRTCProps() {
+                           std::format("drm: connector {} crtc is {} of vrr: props.vrr_capable -> {}, crtc->props.vrr_enabled -> {}", szName, (canDoVrr ? "capable" : "incapable"),
+                                       props.values.vrr_capable, crtc->props.values.vrr_enabled));
+ 
+-    output->supportsExplicit = backend->drmProps.supportsTimelines && crtc->props.values.out_fence_ptr && crtc->primary->props.values.in_fence_fd;
++    // AQ_KMS_FENCE_WITHOUT_TIMELINES=1: pass the consumer's render fence as the primary plane's IN_FENCE_FD even when
++    // the DRM device lacks syncobj timelines (those are only needed for the client-facing linux-drm-syncobj protocol).
++    static const bool FENCE_WITHOUT_TIMELINES = envEnabled("AQ_KMS_FENCE_WITHOUT_TIMELINES");
++    output->supportsExplicit =
++        (backend->drmProps.supportsTimelines || FENCE_WITHOUT_TIMELINES) && crtc->props.values.out_fence_ptr && crtc->primary->props.values.in_fence_fd;
+ 
+     backend->backend->log(AQ_LOG_DEBUG, std::format("drm: Explicit sync {}", output->supportsExplicit ? "supported" : "unsupported"));
+ 
+@@ -2280,6 +2336,22 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
+     if (shouldSubmitCTM(connector, STATE, data.modeset))
+         data.ctm = STATE.ctm;
+ 
++    static const bool CPU_FENCE_WAIT = envEnabled("AQ_KMS_CPU_FENCE_WAIT");
++    if (CPU_FENCE_WAIT && !onlyTest && data.mainFB) {
++        static bool announced = false, warnedNoFence = false;
++        if (!announced) {
++            announced = true;
++            backend->backend->log(AQ_LOG_DEBUG, "drm: AQ_KMS_CPU_FENCE_WAIT: waiting for render fences on the CPU before KMS commits");
++        }
++
++        if (STATE.explicitInFence >= 0)
++            cpuWaitForInFence(backend->backend.lock(), name, STATE.explicitInFence);
++        else if ((COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_BUFFER) && !warnedNoFence) {
++            warnedNoFence = true;
++            backend->backend->log(AQ_LOG_WARNING, "drm: AQ_KMS_CPU_FENCE_WAIT: buffer committed without a render fence; cannot wait for it");
++        }
++    }
++
+     bool ok = connector->commitState(data);
+ 
+     // a buffer acquired only to validate/attempt the modeset isn't consumed by the

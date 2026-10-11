@@ -29,6 +29,7 @@ if [[ ! -f $config/vegas/chrome-software && -c /dev/mali0 && -f /run/vegas-gpu-r
     export LD_LIBRARY_PATH=/opt/vegas-gpu/mesa-kbase/lib
     export LIBGL_DRIVERS_PATH=/opt/vegas-gpu/mesa-kbase/lib/dri
     raster=(--disable-gpu-rasterization)
+    [[ -f $config/vegas/chrome-gpu-raster ]] && raster=(--enable-gpu-rasterization)
   fi
   # 2D canvas stays on the CPU: it benchmarked slower on both GPU drivers.
   gpu=(--use-gl=angle --use-angle=gles --ignore-gpu-blocklist

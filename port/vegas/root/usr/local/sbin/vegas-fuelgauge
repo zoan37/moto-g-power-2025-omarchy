@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Switch MediaTek's fuel gauge to its in-kernel algorithm (battery percentage).
+
+mtk_battery runs in "daemon mode" after probe and waits for Android's fuel-gauge
+daemon (netlink protocol NETLINK_FGD) to compute the state of charge, so without
+Android the capacity stays -1. The driver falls back to its kernel algorithm
+(the one recovery mode uses) when a daemon reports a protocol version that
+doesn't match (mtk_battery_daemon.c fg_daemon_send_data,
+FG_DAEMON_CMD_SEND_VERSION_CONTROL). This registers as the daemon and sends
+such a version once; the kernel then logs "enable Kernel mode Gauge".
+"""
+import os
+import socket
+import struct
+import sys
+import time
+
+NETLINK_FGD = 26
+FGD_NL_MAGIC = 2015060303
+FGD_NL_HDR_LEN = 32            # struct fgd_nl_msg_t without fgd_data
+FG_DAEMON_CMD_SET_DAEMON_PID = 1
+FG_DAEMON_CMD_SEND_VERSION_CONTROL = 5
+PARAM_T_4_LEN = 12 + 2048      # struct fgd_cmd_param_t_4
+CAPACITY = '/sys/class/power_supply/battery/capacity'
+
+
+def message(sock, seq, cmd, data, ret_len=0):
+    # fgd_nl_msg_t: nl_cmd, fgd_cmd, fgd_cmd_hash, fgd_subcmd,
+    # fgd_subcmd_para1 (= header length, checked by fg_cmd_check),
+    # fgd_data_len, fgd_ret_data_len, identity, fgd_data[]
+    payload = struct.pack('<8I', 0, cmd, 0, 0, FGD_NL_HDR_LEN, len(data), ret_len,
+                          FGD_NL_MAGIC) + data
+    header = struct.pack('<IHHII', 16 + len(payload), 0, 0, seq, os.getpid())
+    sock.sendto(header + payload, (0, 0))
+
+
+def main():
+    try:
+        with open(CAPACITY) as f:
+            if int(f.read()) >= 0 and '--force' not in sys.argv:
+                print('fuel gauge already reports a capacity')
+                return 0
+    except (OSError, ValueError):
+        pass
+    sock = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, NETLINK_FGD)
+    sock.bind((os.getpid(), 0))
+    message(sock, 1, FG_DAEMON_CMD_SET_DAEMON_PID, struct.pack('<i', os.getpid()))
+    # VersionControl {androidVersion, daemon_cmds, kernel_cmds,
+    # custom_data_len, custom_table_len}: impossible counts -> kernel mode.
+    version = struct.pack('<5i', 0, -1, -1, 0, 0)
+    param = struct.pack('<3I', len(version), len(version), 0) + version
+    message(sock, 2, FG_DAEMON_CMD_SEND_VERSION_CONTROL, param, PARAM_T_4_LEN)
+    for _ in range(30):
+        time.sleep(1)
+        try:
+            with open(CAPACITY) as f:
+                capacity = int(f.read())
+        except (OSError, ValueError):
+            continue
+        if capacity >= 0:
+            print(f'kernel fuel gauge active: {capacity}%')
+            return 0
+    print('capacity still unknown after 30 s')
+    return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

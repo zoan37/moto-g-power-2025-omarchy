@@ -26,6 +26,8 @@ systemd-sysusers
 mkdir -p /var/lib/dbus
 dbus-uuidgen --ensure=/var/lib/dbus/machine-id
 dbus-daemon --system --fork --nopidfile
+# UPower (no systemd to activate it): Omarchy's battery indicator reads it.
+/usr/lib/upowerd >>/var/log/vegas/upower.log 2>&1 &
 "$bb" httpd -f -p 192.168.77.1:8080 -h "$helper/www" &
 
 # Android's init normally creates device nodes. Populate them for Linux.
@@ -158,6 +160,10 @@ fi
 # Hardware video decode (MediaTek decoder + mtk_stateful VA-API for Chrome),
 # in the background so a slow or failing module load never delays the desktop.
 "$helper/video-prepare" >>/var/log/vegas/video.log 2>&1 &
+
+# Battery percentage: switch MediaTek's fuel gauge from waiting for Android's
+# daemon to its kernel algorithm.
+/usr/local/sbin/vegas-fuelgauge >>/var/log/vegas/fuelgauge.log 2>&1 &
 
 # Wi-Fi in the background so it never delays the desktop.
 "$helper/wifi-up" >>/var/log/vegas/wifi.log 2>&1 &
