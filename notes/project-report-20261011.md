@@ -1,4 +1,4 @@
-# Project report: Omarchy on the Moto G Power 2025 (2026-10-11)
+# Project report: Omarchy on the Moto G Power 2025 (2026-10-11, updated in the afternoon)
 
 A snapshot for anyone picking this up (another Claude Code session, a collaborator, or the user later).
 It covers what works, how the system is put together, what was learned on 2026-10-10/11, and how the
@@ -21,11 +21,11 @@ phone-specific, but build it in a way that keeps the long-term path open (sectio
 | Layer | What runs | Source |
 |---|---|---|
 | Bootloader | Motorola LK, Valhalla-patched on **both** slots (bootloader unlocked) | `notes/valhalla-20261006.md` |
-| Kernel | Google GKI `5.15.180-android13-8` (stock `boot_b`, unmodified) | `notes/kernel-build-20261010.md` |
+| Kernel | Google GKI `5.15.180-android13-8`, rebuilt byte-for-byte as **tier 1** (+DEVTMPFS, FHANDLE, AUTOFS; all vendor-module CRCs unchanged) in `boot_b` | `notes/kernel-build-20261010.md` |
 | Vendor drivers | 197 MediaTek/Motorola modules (vendor_boot + vendor_dlkm) | open source (GPL), Motorola publishes them |
 | Firmware | VCP (video), WMT (Wi-Fi/BT), touch, GPU, modem… | closed binaries, loaded as Android does |
 | Ramdisk | our `init_boot_b`: BusyBox `init` loads modules, picks the root, `switch_root` | `bringup/init`, `bringup/ufs-guard` |
-| PID 1 | `native-init` (Bash supervisor; the stock kernel lacks DEVTMPFS/FHANDLE for systemd) | `port/vegas/root/usr/local/libexec/vegas/native-init` |
+| PID 1 | **systemd** (default since 2026-10-11; boot ≈ 9 s); `native-init` (Bash supervisor) remains the fallback after an unconfirmed boot | `notes/systemd-migration-20261011.md` |
 | Root filesystem | Arch Linux ARM + Omarchy, **ext4 inside `userdata`** (24 GiB offset, `/dev/loop7`) | `notes/internal-storage-20261010.md` |
 | Compositor | Hyprland on direct DRM, rendering on the Mali through Mesa panfrost-kbase (patched) | `notes/gpu-bringup-20261007.md`, `notes/direct-drm-latency-20261007.md` |
 | Apps | Google Chrome (web apps via `--app`), foot, Omarchy shell (Quickshell) | |
@@ -42,20 +42,28 @@ exact GKI build. Mainline would mean porting or rewriting every driver (section 
 
 | Area | State |
 |---|---|
-| Boot | Internal UFS root, ~30 s to Linux. The microSD is a rescue copy (automatic fallback, or a `prefer-card` file) with a **red SD bar badge + critical notification** |
+| Boot | Internal UFS root, systemd as PID 1, **~9 s** from kernel to running (desktop a few seconds later). The microSD is a rescue copy (automatic fallback, or a `prefer-card` file) with a **red SD bar badge + critical notification** |
 | A/B safety | `vegas-bootctrl` marks each good boot successful and drops slot a (old stock Android, which would format `userdata`) from the fallback order |
-| Display | 1080×2388 DSI panel, **120 Hz** default (`vegas-refresh 60/90/120`), UI scale 3 |
+| Display | 1080×2388 DSI panel, **120 Hz** default (`vegas-refresh 60/90/120`), UI scale 3; **adaptive brightness** from the ambient light sensor; **auto-rotate** (tile) with touch following |
 | GPU | Mali-G57 MC2 via Mesa panfrost-kbase (with this project's JM deferred-free + native fence FD patches). ARM libmali r48 (compat shim) is opt-in for Chrome |
 | GPU clock | **Fixed**: GED loading mode 0 plus Android-style touch boost (`vegas-gpu-boost`). Before this the Mali never left 390 MHz |
-| Scrolling | X at 120 Hz: ~92 fps (≈100 fps with autoplay off), up from ~41. Test feed: 110 fps, 8% late |
-| Touch / keyboard | Native touch. wvkbd four-row phone layout, auto show/hide on text focus, sized from the real scale |
-| Input latency | tap → terminal ≈ 6.4 ms |
-| Web apps | Chrome `--app` with one app per workspace. Grok and X launchers in the bar (`vegas.apps` plugin) |
-| Wi-Fi | WMT + wpa_supplicant (`vegas-wifi`) |
-| Storage speed | I/O stall gone (pressure ~0.5% vs 77% on the SD card) |
+| Scrolling | X at 120 Hz: ~92 fps (≈100 fps with autoplay off), up from ~41. KMS commits wait for render fences (no half-drawn frames; the user reports no ghosting/jumps) |
+| Video | **Hardware decode in Google Chrome** (H.264/HEVC/VP9 ≤1440p) through this project's stateful VA-API driver `mtk_stateful` |
+| Touch / keyboard | Native touch. wvkbd four-row phone layout with a **haptic tick**, auto show/hide on text focus |
+| Phone shell | Status bar, nav bar (back/home/keyboard + swipes), home screen with open/pinned apps, **pull-down quick settings** (Wi-Fi picker, Bluetooth, DND, airplane, auto-rotate, brightness/volume, notifications), Omarchy popups fitted to 360 pt |
+| Power key | Short press: screen off/on; long press: power menu; **double-tap to wake**; screen timeout 60 s |
+| Sleep | **s2idle autosleep** while the screen is off; wake on power key, double tap, **Wi-Fi traffic (instant push)**, 15-min sync windows |
+| Audio | Speakers (factory calibration), mic, earpiece/headset paths, PipeWire with realtime threads, headphone-jack switching |
+| Bluetooth | BlueZ via a /dev/stpbt ↔ hci_vhci bridge (factory address), A2DP/HFP endpoints registered |
+| Sensors | 22 via the SCP sensor hub (`/dev/hf_manager`): light, proximity, accelerometer, gyro, compass, barometer, Motorola rotation |
+| Battery | % and temperature (kernel fuel-gauge mode), UPower |
+| Vibration | Awinic LRA: keyboard ticks, notifications, power menu |
+| Web apps | Chrome `--app` with one app per workspace (Grok, X pinned on the home screen) |
+| Wi-Fi | WMT + wpa_supplicant (`vegas-wifi`), touch network picker |
+| Health check | `vegas-doctor`: one command, ok/WARN/FAIL per subsystem (0/0 today) |
 
-**Not yet:** systemd as PID 1, audio (UCM), suspend, battery %, hardware video decode in the browser,
-camera, cellular (out of scope).
+**Not yet:** camera, GPS, cellular (out of scope), a lock screen, a charge limit, Bluetooth audio tested with a real
+headset.
 
 ## 4. This session's work (2026-10-10/11) and lessons
 
@@ -121,6 +129,24 @@ camera, cellular (out of scope).
 - Next: flash tier 1 to `boot_b` (stock `boot.img` kept), check all modules load, then try systemd as
   PID 1. That unlocks normal Omarchy services and udev, and removes the hand-made `/dev` nodes.
 
+### 4.7 Afternoon of 2026-10-11 (systemd onward)
+Each item has a dated note with the details and the measurements:
+- **systemd** as PID 1 on the tier-1 kernel (`notes/systemd-migration-20261011.md`).
+- **Audio** (`notes/audio-20261011.md`): 16 vendor modules (one more than planned: the PMIC efuse), UCM2, speaker
+  calibration from the persist partition, the jack watcher, RTKit via a polkit rule (seatless session).
+- **Suspend** (`notes/suspend-20261011.md`): MediaTek's pd/clk/alarm checkers need the display off and retries;
+  wake-on-WLAN "any" with traffic-based grace, because the firmware can't drop broadcasts.
+- **Bluetooth** (`notes/bluetooth-20261011.md`): hci_vhci built for tier 1; the bridge clears a feature bit the
+  firmware advertises but rejects.
+- **Sensors** (`notes/sensors-20261011.md`), **vibration** (`notes/haptics-20261011.md`), **phone UI**
+  (`notes/phone-ui-20261011.md`: quick settings, power key, double tap, Omarchy patches).
+- Lessons:
+  - Hyprland reloads on config file changes, so pushes must be atomic.
+  - Hyprland does not rotate touch with the output.
+  - The desktop runs on its own D-Bus session (not the user bus).
+  - Omarchy's menu skips `when:` guards in its PRoot mode.
+  - Loud test tones are not OK: audible tests stay at about −80 dB.
+
 ## 5. Open vs closed: what we depend on
 
 | Piece | Status | Notes |
@@ -178,18 +204,19 @@ on Dimensity 6300 / MT6835-family chips.
 
 ## 7. Suggested roadmap
 
-**Next (days):**
-1. Browser hardware video decode: ALARM Chromium + V4L2, a module-load script and udev-free device
-   nodes in `native-init`, and the vcodec MMAP fix if needed.
-2. Flash the tier-1 kernel, then systemd as PID 1.
-3. Bar redesign for phone scale.
+**Next:**
+- Bluetooth headset test (A2DP/HFP), and a battery-drain measurement from the autosleep log (asleep vs screen-off
+  awake).
+- Lock screen (only with a tested on-screen keyboard path to the PIN/password).
+- Charge limit (Motorola's demo-mode limiter can't be turned off without a reboot; a proper one needs the
+  charger IC's charge-enable control).
+- Smoothness: an asynchronous fence wait in aquamarine instead of the CPU wait (the cost is ~2–4 points of late
+  frames).
 
-**Then (weeks):**
-- Audio (UCM from Android mixer paths), suspend/resume, battery % in Omarchy's panel.
-- Make libmali or Mesa the single Chrome default after a long-session stability check.
-- Get Chrome's GPU draw under 8.3 ms for a steady 120 Hz: try Hyprland on libmali, and check why
-  direct scanout didn't engage.
-- First small Omarchy PRs (keyboard scale fix; mobile shell plugins as optional).
+**Then:**
+- First small Omarchy PRs: scale-aware keyboard sizing, the phone shell plugins as an optional "mobile" profile,
+  phone-fit fixes like `omarchy-patches/*.patch`.
+- GPS (MediaTek GNSS needs its proprietary `mnld` daemon: hard), camera (MediaTek ISP + HAL3: very hard).
 
 **Later (months):**
 - Build the button pusher and wire it into recovery scripts.
@@ -197,8 +224,7 @@ on Dimensity 6300 / MT6835-family chips.
 - Watch and maybe join MT6835 mainline efforts.
 
 ## 8. Decisions for the user
-- Browser: is switching X/Grok web apps to **Chromium** (for hardware video) acceptable, or must it be
-  Google Chrome (harder: stateful VA-API driver)?
+- ~~Chromium vs Google Chrome for hardware video~~: decided Google Chrome; done through the stateful VA-API driver.
 - How phone-specific should the shell become vs a generic "Omarchy mobile" plugin set?
 - The Android dual-boot idea: the first 24 GiB of `userdata` is reserved, but making Android use only
   that part needs fstab changes in vendor partitions. Keep it parked?
@@ -207,5 +233,7 @@ on Dimensity 6300 / MT6835-family chips.
 - Notes: `notes/internal-storage-20261010.md`, `notes/chrome-scrolling-20261010.md`,
   `notes/kernel-build-20261010.md`, `notes/video-decode-research-20261011.md`,
   `notes/handoff-kernel-20261010.md`, `hardware/button-pusher/README.md`.
-- Commits this session: fa27c63 … ef4d68d on `main` (github.com/zoan37/moto-g-power-2025-omarchy).
+- Commits: fa27c63 … (2026-10-10/11) on `main` (github.com/zoan37/moto-g-power-2025-omarchy).
+- Afternoon notes: `notes/systemd-migration-20261011.md`, `audio-20261011.md`, `suspend-20261011.md`,
+  `bluetooth-20261011.md`, `sensors-20261011.md`, `haptics-20261011.md`, `phone-ui-20261011.md`.
 - Phone access: USB network `192.168.77.1:8080/cgi-bin/command` (root shell CGI, USB link only).
