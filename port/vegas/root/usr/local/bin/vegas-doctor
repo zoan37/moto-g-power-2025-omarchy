@@ -1,0 +1,99 @@
+#!/bin/bash
+# One-command health check for the phone port: ok/WARN/FAIL per subsystem.
+# Run as root (some checks read root-only files). Exit status = number of FAILs.
+set -u
+fails=0 warns=0
+ok()   { printf '  ok    %s\n' "$*"; }
+warn() { printf '  WARN  %s\n' "$*"; warns=$((warns + 1)); }
+fail() { printf '  FAIL  %s\n' "$*"; fails=$((fails + 1)); }
+check() { # check "label" cmd...
+  local label=$1; shift
+  if "$@" >/dev/null 2>&1; then ok "$label"; else fail "$label"; fi
+}
+hc() {
+  local sig; sig=$(ls /run/user/1000/hypr/ 2>/dev/null | head -1)
+  runuser -u omarchy -- env XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE="$sig" \
+    /opt/omarchy-android/hyprland/bin/hyprctl "$@" 2>/dev/null
+}
+
+echo "Boot and storage"
+read -r src reason </run/vegas-boot-source 2>/dev/null || src=unknown
+if [[ $src == ufs ]]; then ok "booted from internal storage"; else fail "booted from: $src ${reason:-}"; fi
+root=$(findmnt -n -o SOURCE /)
+[[ $root == /dev/loop7 ]] && ok "root on $root" || warn "root on $root"
+[[ $(losetup -n -O DIO /dev/loop7 2>/dev/null | tr -d ' ') == 1 ]] && ok "loop7 direct I/O" || warn "loop7 direct I/O off"
+if out=$(/usr/local/sbin/vegas-bootctrl status 2>&1); then
+  grep -q "b\* .*'successful': 1" <<<"$out" && ok "slot b marked successful" || warn "slot b not yet marked successful"
+  grep -q "^a .*'priority': 0" <<<"$out" && ok "slot a out of the fallback order" || fail "slot a can still boot (old Android would format userdata)"
+else
+  fail "boot control unreadable"
+fi
+pct=$(df --output=pcent / | tail -1 | tr -dc 0-9)
+(( pct < 85 )) && ok "root ${pct}% full" || warn "root ${pct}% full"
+
+echo "GPU"
+if [[ -f /run/vegas-gpu-ready && -c /dev/mali0 ]]; then ok "Mali ready"; else fail "GPU desktop not ready (software rendering)"; fi
+[[ $(cat /sys/kernel/ged/hal/dvfs_loading_mode 2>/dev/null) == 0 ]] && ok "GED loading mode 0" || fail "GED loading mode (GPU clock stuck low)"
+[[ $(cat /sys/kernel/ged/hal/timer_base_dvfs_margin 2>/dev/null) == 70 ]] && ok "GED margin 70" || warn "GED margin $(cat /sys/kernel/ged/hal/timer_base_dvfs_margin 2>/dev/null)"
+pgrep -f vegas-gpu-boost >/dev/null && ok "touch boost daemon running" || fail "touch boost daemon not running"
+faults=$(dmesg 2>/dev/null | grep -c -i -E 'mali.*(fault|hard reset)')
+(( faults == 0 )) && ok "no Mali faults this boot" || warn "$faults Mali fault lines in dmesg"
+
+echo "Scheduler"
+[[ $(cat /proc/sys/kernel/sched_pelt_multiplier 2>/dev/null) == 4 ]] && ok "PELT multiplier 4" || warn "PELT multiplier $(cat /proc/sys/kernel/sched_pelt_multiplier 2>/dev/null)"
+if [[ -d /sys/fs/cgroup/top-app ]]; then
+  [[ $(cat /sys/fs/cgroup/top-app/cpu.uclamp.latency_sensitive) == 1 ]] && ok "top-app latency_sensitive" || warn "top-app latency_sensitive off"
+  hp=$(pgrep -x Hyprland | head -1)
+  grep -q top-app "/proc/$hp/cgroup" 2>/dev/null && ok "Hyprland in top-app" || warn "Hyprland not in top-app"
+else
+  fail "no top-app cgroup"
+fi
+for p in /sys/devices/system/cpu/cpufreq/policy*; do
+  [[ $(cat "$p/scaling_governor") == schedutil ]] || warn "$(basename "$p") governor $(cat "$p/scaling_governor")"
+done
+
+echo "Video decode"
+if [[ -e /var/lib/vegas/no-video-decode ]]; then warn "disabled (no-video-decode)"
+elif [[ -e /var/lib/vegas/video-disabled-unstable ]]; then fail "disabled after an unconfirmed boot (remove /var/lib/vegas/video-disabled-unstable)"
+else
+  [[ -d /sys/module/mtk_vcodec_dec_v1 ]] && ok "decoder module loaded" || fail "decoder module not loaded"
+  compgen -G '/dev/video[0-9]*' >/dev/null && ok "decoder device node" || fail "no /dev/video node"
+  [[ -f /opt/vegas-video/va/mtk_stateful_drv_video.so ]] && ok "VA-API driver installed" || fail "VA-API driver missing"
+  [[ $(stat -c %G /dev/dma_heap/mtk_mm 2>/dev/null) == video ]] && ok "mtk_mm heap open to video" || warn "mtk_mm heap root-only (slower system heap fallback)"
+fi
+
+echo "Desktop"
+pgrep -x Hyprland >/dev/null && ok "Hyprland running" || fail "Hyprland not running"
+pgrep -f 'quickshell -n' >/dev/null && ok "Omarchy shell running" || fail "Omarchy shell not running"
+errs=$(hc configerrors | grep -v -E '^\s*$' | wc -l)
+(( errs == 0 )) && ok "no Hyprland config errors" || fail "Hyprland config errors: $errs"
+[[ $(hc getoption debug:vfr | head -1) == *true* ]] && ok "vfr on" || warn "vfr off"
+mode=$(hc monitors | grep -o -m1 '[0-9]*x[0-9]*@[0-9.]*')
+[[ $mode == *@120* ]] && ok "panel $mode" || warn "panel $mode"
+pgrep -x wvkbd-mobintl >/dev/null && ok "keyboard running" || warn "keyboard not running"
+
+echo "Browser"
+if chrome=$(pgrep -x chrome | head -1); [[ -n $chrome ]]; then
+  for p in $(pgrep -x chrome); do
+    tr '\0' ' ' </proc/$p/cmdline | grep -q -- '--type=' && continue
+    cmd=$(tr '\0' ' ' </proc/$p/cmdline)
+    [[ $cmd == *VaapiVideoDecoder* ]] && ok "Chrome VA-API decode enabled" || warn "Chrome running without VA-API decode (restart it)"
+    [[ $cmd == *use-gl=angle* ]] && ok "Chrome GPU compositing" || warn "Chrome on software GL"
+    break
+  done
+else
+  ok "Chrome not running"
+fi
+
+echo "Power and thermal"
+temp=$(cat /sys/class/power_supply/battery/temp 2>/dev/null)
+if [[ $temp =~ ^[0-9]+$ ]]; then
+  (( temp < 370 )) && ok "battery $((temp / 10)).$((temp % 10)) C" || warn "battery $((temp / 10)).$((temp % 10)) C (boost backs off at 37 C, fastboot guard at 40 C)"
+fi
+cap=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null)
+[[ $cap =~ ^[0-9]+$ && $cap -ge 0 ]] && ok "battery ${cap}%" || warn "battery capacity unreadable"
+ip -4 -br addr show wlan0 2>/dev/null | grep -q UP && ok "Wi-Fi up" || warn "Wi-Fi down"
+
+echo
+echo "$fails FAIL, $warns WARN"
+exit "$fails"
