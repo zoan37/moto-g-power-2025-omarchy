@@ -341,6 +341,11 @@ Item {
   readonly property int phoneSafeTop: phoneMetric("phoneSafeTop", Math.round(84 / phoneScale), 128)
   readonly property int phoneSideInset: phoneMetric("phoneSideInset", 10, 64)
   readonly property int barSize: vertical ? Style.bar.sizeVertical : Math.max(Style.bar.sizeHorizontal, phoneMetric("phoneBarHeight", 48, 96))
+  // On a touchscreen, the desktop bar's drag-to-move / drag-to-reorder and
+  // double-tap-for-transparency gestures fire on ordinary swipes (a swipe
+  // down on the status bar moved it to the bottom edge). Locked unless
+  // shell.json sets bar.phoneLockLayout to false.
+  readonly property bool phoneLocked: !(root.barConfig && root.barConfig.phoneLockLayout === false)
 
   function normalizePosition(value) {
     return BarModel.normalizePosition(value)
@@ -1416,7 +1421,7 @@ Item {
     pressAndHoldInterval: 200
 
     function startDrag(x, y) {
-      if (dragging) return
+      if (dragging || root.phoneLocked) return
       dragging = true
       root.beginBarMove(root.targetWindow(gestureArea))
       var scenePoint = gestureArea.mapToItem(null, x, y)
@@ -1477,7 +1482,7 @@ Item {
         suppressClick = false
         return
       }
-      if (mouse.button === Qt.LeftButton) {
+      if (mouse.button === Qt.LeftButton && !root.phoneLocked) {
         root.toggleTransparency()
         mouse.accepted = true
       }
@@ -1671,7 +1676,7 @@ Item {
       property bool suppressClick: false
       property real pressedX: 0
       property real pressedY: 0
-      readonly property bool canReorder: root.shell && typeof root.shell.mutateShellConfig === "function"
+      readonly property bool canReorder: !root.phoneLocked && root.shell && typeof root.shell.mutateShellConfig === "function"
       readonly property real dragThreshold: Style.space(4)
 
       anchors.fill: parent

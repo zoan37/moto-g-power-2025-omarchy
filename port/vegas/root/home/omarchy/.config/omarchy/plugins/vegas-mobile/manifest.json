@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "vegas.mobile",
+  "name": "Phone navigation and home",
+  "version": "1.0.0",
+  "author": "Vegas phone port",
+  "description": "Bottom navigation bar (back, home, keyboard; swipe to switch apps) and a home screen listing open and pinned apps",
+  "kinds": ["panel"],
+  "keepLoaded": true,
+  "entryPoints": {"panel": "Mobile.qml"}
+}

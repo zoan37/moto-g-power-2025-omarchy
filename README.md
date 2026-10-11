@@ -55,6 +55,7 @@ See [GPU implementation and measurements](notes/gpu-bringup-20261007.md).
 - [Current status and historical checkpoints](notes/status.md)
 - [Native boot, USB access, and stock Android recovery](notes/native-omarchy-20261006.md)
 - [Phone UI and cable-aware shutdown](notes/phone-polish-20261007.md)
+- [Phone UI: navigation bar, home screen, edge-to-edge apps](notes/phone-ui-20261011.md)
 - [Hardware research and model identification](notes/power-2025.md)
 - [Valhalla unlock experiment](notes/valhalla-20261006.md)
 

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "vegas.wifi",
+  "name": "Wi-Fi signal",
+  "version": "1.0.0",
+  "description": "Wi-Fi signal strength from /proc/net/wireless (no NetworkManager needed)",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "Wifi.qml"},
+  "barWidget": {"displayName": "Wi-Fi signal", "defaultSection": "right", "allowMultiple": false,
+                "defaults": {"interface": "wlan0", "interval": 20}}
+}

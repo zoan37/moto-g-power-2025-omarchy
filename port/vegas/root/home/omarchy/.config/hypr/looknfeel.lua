@@ -25,3 +25,15 @@ hl.env("LC_ALL", "C.UTF-8")
 hl.env("XCURSOR_THEME", "Adwaita")
 hl.env("XCURSOR_SIZE", "36")
 hl.env("HYPRCURSOR_SIZE", "36")
+
+-- Phone UI: apps fill the screen edge to edge, like Android/iOS. No gaps,
+-- borders or rounding around tiled windows (one app per workspace, so there
+-- is never a second window to tell apart); the status bar, navigation bar
+-- and keyboard reserve their own space as layer-shell exclusive zones.
+hl.config({
+  general = { gaps_in = 0, gaps_out = 0, border_size = 0 },
+  decoration = { rounding = 0 },
+})
+-- Omarchy makes windows 98.5%/96% opaque. On a phone that only blends the
+-- wallpaper into every frame of every app; keep apps fully opaque.
+hl.window_rule({ match = { tag = "default-opacity" }, opacity = "1 1" })

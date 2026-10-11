@@ -40,8 +40,9 @@ require("default.hypr.toggles")
 -- o.window("qemu", { workspace = "5" })
 
 -- Phone: one app per screen, like Android/iOS. Each new tiled window opens on
--- the next empty workspace and fills it; tap the bar's workspace numbers to
--- switch apps. (Hyprland only resizes borders by mouse, not touch.)
+-- the next empty workspace and fills it. The vegas.mobile shell plugin builds
+-- on this: an empty workspace is "home", and its navigation bar switches
+-- between workspaces (see notes/phone-ui-20261011.md).
 hl.window_rule({ match = { float = false }, workspace = "empty" })
 
 -- Prefer the native supervisor adapters in /usr/local/bin.

@@ -6,43 +6,79 @@
   },
   "bar": {
     "id": "vegas.bar",
-    "phoneBarHeight": 48,
+    "phoneSafeTop": 0,
+    "phoneBarHeight": 28,
+    "phoneSideInset": 0,
     "position": "top",
     "transparent": false,
-    "centerAnchor": "omarchy.clock",
+    "centerAnchor": "",
     "layout": {
       "left": [
         {
-          "id": "omarchy.menu"
+          "id": "omarchy.spacer",
+          "size": 12
         },
-        {
-          "id": "vegas.bootsource"
-        },
-        {
-          "id": "vegas.keyboard"
-        },
-        {
-          "id": "omarchy.workspaces"
-        }
-      ],
-      "center": [
         {
           "id": "omarchy.clock",
           "format": "HH:mm"
         }
       ],
+      "center": [],
       "right": [
         {
-          "id": "vegas.apps"
+          "id": "vegas.bootsource"
         },
         {
-          "id": "omarchy.monitor"
+          "id": "vegas.wifi"
         },
         {
-          "id": "omarchy.power"
+          "id": "omarchy.power",
+          "showPercentage": true
+        },
+        {
+          "id": "omarchy.spacer",
+          "size": 12
         }
       ]
     }
   },
-  "plugins": []
+  "plugins": [
+    {
+      "id": "vegas.mobile",
+      "navHeight": 44,
+      "home": true,
+      "gestures": true,
+      "pinned": [
+        {
+          "name": "Terminal",
+          "glyph": "\uf120",
+          "exec": "foot",
+          "match": "^foot$"
+        },
+        {
+          "name": "Grok",
+          "icon": "~/.local/share/icons/hicolor/256x256/apps/grok.png",
+          "exec": "/usr/local/bin/omarchy-launch-webapp https://grok.com",
+          "match": "^chrome-grok\\.com"
+        },
+        {
+          "name": "X",
+          "icon": "~/.local/share/applications/icons/X.png",
+          "exec": "/usr/local/bin/omarchy-launch-webapp https://x.com/",
+          "match": "^chrome-x\\.com"
+        },
+        {
+          "name": "Apps",
+          "glyph": "\uf00a",
+          "action": "apps"
+        },
+        {
+          "name": "Omarchy",
+          "glyph": "\ue900",
+          "font": "omarchy",
+          "action": "menu"
+        }
+      ]
+    }
+  ]
 }

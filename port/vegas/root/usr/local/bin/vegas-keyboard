@@ -7,14 +7,25 @@ export WVKBD_IMMEDIATE_DRAW=1
 scale=$(hyprctl monitors -j 2>/dev/null | jq -r '.[0].scale // empty')
 [[ $scale =~ ^[0-9.]+$ ]] || scale=${OMARCHY_SCALE:-1.5}
 px() { awk -v v="$1" -v s="$scale" 'BEGIN { printf "%d", v / s + 0.5 }'; }
+# The phone navigation bar (vegas.mobile in shell.json) already keeps the
+# keyboard off the bottom edge, so it sits flush on top of it; without the
+# bar, keep a 48 px safe margin above the rounded bottom corners.
+margin=48
+if jq -e '.plugins[]? | select(.id == "vegas.mobile")' "$HOME/.config/omarchy/shell.json" >/dev/null 2>&1; then
+  margin=0
+fi
 # Phone-style: four rows (digits, Esc and arrows on ?123), rounded dark keys,
 # shown and hidden with text focus like Gboard or the iOS keyboard.
 wvkbd-mobintl -H "$(px 620)" -L "$(px 360)" --fn "Sans $(px 44)" -R "$(px 14)" \
   -l mobile,special --landscape-layers mobile,special \
   --bg 121212 --fg 3a3a3c --fg-sp 2a2a2c --press 5c5c60 --press-sp 4a4a4e \
   --text f2f2f2 --text-sp f2f2f2 \
-  --margin-bottom "$(px 48)" --no-popup --auto "$@" &
+  --margin-bottom "$(px "$margin")" --no-popup --hidden --auto "$@" &
 keyboard=$!
+# Start hidden: --auto maps it as soon as a text field has focus. Starting
+# visible races the first auto show/hide, and Hyprland then keeps a destroyed,
+# never-mapped surface that still reserves 207 pt (the keyboard floated
+# mid-screen with wallpaper below it after the 2026-10-11 boot).
 # wvkbd first draws at 1x and only adopts a fractional output scale when its
 # surface is re-created; hide and re-show it once so it renders sharply.
 (sleep 2; kill -RTMIN "$keyboard"; sleep 0.5; kill -RTMIN "$keyboard") 2>/dev/null &
