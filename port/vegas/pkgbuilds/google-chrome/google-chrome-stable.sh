@@ -62,5 +62,8 @@ fi
 features=()
 (( ${#enable[@]} )) && features+=("--enable-features=$(IFS=,; echo "${enable[*]}")")
 (( ${#disable[@]} )) && features+=("--disable-features=$(IFS=,; echo "${disable[*]}")")
+# Phone: pull down at the top of a page to reload it, as in Chrome on Android
+# (tested on the touchscreen). User flags come later, so --pull-to-refresh=0 in
+# chrome-flags.conf turns it off.
 exec /opt/google/chrome/google-chrome --ozone-platform=wayland --enable-wayland-ime \
-  --password-store=basic "${gpu[@]}" "${rest[@]}" "${features[@]}" "$@"
+  --password-store=basic --pull-to-refresh=1 "${gpu[@]}" "${rest[@]}" "${features[@]}" "$@"
