@@ -62,8 +62,10 @@ exact GKI build. Mainline would mean porting or rewriting every driver (section 
 | Wi-Fi | WMT + wpa_supplicant (`vegas-wifi`), touch network picker |
 | Health check | `vegas-doctor`: one command, ok/WARN/FAIL per subsystem (0/0 today) |
 
-**Not yet:** camera, GPS, cellular (out of scope), a lock screen, a charge limit, Bluetooth audio tested with a real
-headset.
+| Charging | Critical-battery guard (clean shutdown at 3%), optional charge limit (`vegas-charge-limit 80`) |
+| Updates | `pacman -Syu` safe: Hyprland bundle libraries pinned, quickshell + Qt held, `vegas-rescue-sync` refreshes the microSD rescue copy first (first full upgrade done: systemd 262) |
+
+**Not yet:** camera, GPS, cellular (out of scope), a lock screen, Bluetooth audio tested with a real headset.
 
 ## 4. This session's work (2026-10-10/11) and lessons
 
@@ -208,8 +210,6 @@ on Dimensity 6300 / MT6835-family chips.
 - Bluetooth headset test (A2DP/HFP), and a battery-drain measurement from the autosleep log (asleep vs screen-off
   awake).
 - Lock screen (only with a tested on-screen keyboard path to the PIN/password).
-- Charge limit (Motorola's demo-mode limiter can't be turned off without a reboot; a proper one needs the
-  charger IC's charge-enable control).
 - Smoothness: an asynchronous fence wait in aquamarine instead of the CPU wait (the cost is ~2–4 points of late
   frames).
 
