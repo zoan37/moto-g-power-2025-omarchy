@@ -357,3 +357,21 @@ Work it needs:
   does) or on `user-1000.slice`
 - the uwsm VT lookup is avoided by the seat0 PAM session, as on the Chromebook (notes in the Chromebook repo,
   desktop-20261008.md)
+
+## Result on the phone (2026-10-11, night): systemd is the default PID 1
+
+Tier-1 kernel (#2) plus the systemd-aware ramdisk (this diff applied to bringup/init, init_boot sha256 7c185e98…):
+- Step 1: files installed with `vegas-systemd-setup install`; native-init boot unchanged (vegas-doctor 0/0).
+- Step 2: new ramdisk on native-init: `/dev` is devtmpfs, native-init chosen, vegas-doctor 0/0.
+- Step 3: `vegas-init systemd-once`. `NATIVE_PID1:systemd`, recovery httpd answering 9 s after boot,
+  `systemctl is-system-running` = **running** (0 failed units), **startup 8.2 s (kernel 3.2 s +
+  userspace 4.9 s)**, Hyprland in `vegas.slice/vegas-top.slice/vegas-desktop.service`, systemd-pending
+  cleared by the confirm timer, vegas-doctor 0/0.
+- Step 4: `vegas-init systemd` (default). A reboot requested from the desktop session (`vegas-power reboot`)
+  goes through vegas-power-request; the next boot is systemd again, 7.7 s, running, vegas-doctor 0/0.
+- The fastboot `fb_mode` safety net used during testing is cleared, and a normal unattended boot reaches
+  systemd + the desktop.
+
+Notes: the top-app slice is an inner cgroup node, so a process started outside the desktop service (e.g. a
+test browser launched from the root CGI) can't be moved into it. Apps launched from Hyprland inherit
+vegas-desktop.service's cgroup inside the slice.
