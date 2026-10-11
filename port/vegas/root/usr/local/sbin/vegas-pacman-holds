@@ -1,0 +1,26 @@
+#!/bin/bash
+# Hold the Omarchy shell's runtime (quickshell + Qt 6) at the versions this phone
+# was tested with. The shell (/usr/share/omarchy/shell) is a pinned bundle
+# written for quickshell 0.3; a newer quickshell could leave the phone without
+# its status bar, nav bar and home screen. quickshell uses Qt's private API, so
+# it can only be held together with every qt6-* package (nothing else on this
+# system needs Qt 6). Everything else keeps upgrading. The Hyprland bundle is
+# protected separately (vegas-pin-desktop-libs).
+#
+#   vegas-pacman-holds apply|remove|status
+set -eu
+conf=/etc/pacman.conf
+mark='# vegas: hold the Omarchy shell runtime (vegas-pacman-holds)'
+line='IgnorePkg = quickshell qt6-*'
+case ${1:-status} in
+  apply)
+    grep -qF "$mark" "$conf" && { echo 'already held'; exit 0; }
+    cp -p "$conf" "$conf.vegas-bak"
+    sed -i "/^\[options\]/a $mark\n$line" "$conf"
+    echo "held: $line" ;;
+  remove)
+    sed -i "\|^$mark\$|,+1d" "$conf"; echo 'removed' ;;
+  status)
+    grep -A1 -F "$mark" "$conf" || echo 'not held' ;;
+  *) echo 'usage: vegas-pacman-holds apply|remove|status' >&2; exit 2 ;;
+esac

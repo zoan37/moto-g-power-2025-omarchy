@@ -105,6 +105,8 @@ echo "Desktop"
 pgrep -x Hyprland >/dev/null && ok "Hyprland running" || fail "Hyprland not running"
 [[ $(patchelf --print-rpath /opt/omarchy-android/hyprland/bin/Hyprland 2>/dev/null) == /opt/omarchy-android/pinned-libs ]] &&
   ok "Hyprland bundle libraries pinned (safe to pacman -Syu)" || warn "Hyprland bundle not pinned: run vegas-pin-desktop-libs apply before upgrading"
+grep -q "^IgnorePkg = quickshell qt6-\*" /etc/pacman.conf && ok "shell runtime held (quickshell + Qt 6)" ||
+  warn "quickshell/Qt not held: vegas-pacman-holds apply"
 pgrep -f 'quickshell -n' >/dev/null && ok "Omarchy shell running" || fail "Omarchy shell not running"
 hp=$(pgrep -x Hyprland | head -1)
 if [[ -f /run/vegas-gpu-ready ]]; then
