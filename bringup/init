@@ -1,6 +1,8 @@
 #!/bin/sh
-# Native Linux diagnostic ramdisk for vegas. Never mounts internal phone storage.
-# Explicit card provisioning can format and mount only the confirmed microSD.
+# Native Linux ramdisk for vegas. The desktop root lives inside the internal
+# UFS userdata partition (see ufs-guard); the confirmed microSD is the rescue
+# copy. The only internal storage it mounts is that filesystem. Explicit card provisioning can
+# format and mount only the confirmed microSD.
 export PATH=/bin:/sbin
 export HOME=/root
 export PS1='vegas-linux# '
@@ -94,17 +96,37 @@ httpd -f -p 192.168.77.1:8080 -h /www &
 httpd_pid=$!
 
 if [ -f /boot-desktop ]; then
+    # Internal storage first. The card boots when the internal root is missing
+    # or broken, or when the card holds a prefer-card file. native-init reads
+    # /run/vegas-boot-source and warns loudly whenever the card is in use.
+    source= reason= src=
     if (
         . /bin/card-guard
         guard_card "$(cat /boot-card-cid)"
         mount_card
     ) && [ -x /mnt/arch/omarchy/usr/local/libexec/vegas/native-init ]; then
+        card_ok=1
+    fi
+    if [ -n "$card_ok" ] && [ -f /mnt/arch/prefer-card ]; then
+        source=card reason=prefer-card
+    elif ( . /bin/ufs-guard; mount_ufs ) && [ -x /mnt/ufs/usr/local/libexec/vegas/native-init ]; then
+        source=ufs
+    elif [ -n "$card_ok" ]; then
+        source=card reason=internal-unavailable
+    fi
+    case "$source" in
+        ufs) src=/mnt/ufs ;;
+        card) src=/mnt/arch/omarchy ;;
+    esac
+    if [ -n "$src" ]; then
+        echo "VEGAS_BOOT_SOURCE:$source $reason"
         mkdir -p /newroot
-        mount --bind /mnt/arch/omarchy /newroot || /bin/to-bootloader
+        mount --bind "$src" /newroot || /bin/to-bootloader
         mkdir -p /newroot/usr/local/libexec/vegas/www/cgi-bin
         cp /bin/busybox /bin/to-bootloader /newroot/usr/local/libexec/vegas/
         cp /www/cgi-bin/card-report /www/cgi-bin/hardware-report /newroot/usr/local/libexec/vegas/www/cgi-bin/
         cp /run/modules.log /newroot/var/log/vegas-modules.log
+        echo "$source $reason" >/run/vegas-boot-source
         # This static process needs no old-root files after switch_root.
         /bin/desktop-watchdog &
         echo "$!" >/run/desktop-watchdog.pid
@@ -114,7 +136,8 @@ if [ -f /boot-desktop ]; then
             mkdir -p "/newroot/$name"
             mount --move "/$name" "/newroot/$name" || /bin/to-bootloader
         done
-        umount /mnt/arch
+        umount /mnt/arch 2>/dev/null
+        umount /mnt/ufs 2>/dev/null
         exec /bin/busybox switch_root /newroot /usr/local/libexec/vegas/native-init
     else
         echo 'Verified desktop root unavailable; retaining USB diagnostics'

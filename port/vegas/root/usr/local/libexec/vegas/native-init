@@ -12,6 +12,9 @@ chown omarchy:omarchy /run/user/1000
 chmod 0700 /run/user/1000
 exec >>/var/log/vegas/init.log 2>&1
 echo "VEGAS_NATIVE_ARCH_PID1 pid=$$"
+# The internal root is a loop device over userdata (see the ramdisk's
+# ufs-guard). Direct I/O keeps pages from being cached twice.
+[[ $(findmnt -n -o SOURCE /) == /dev/loop7 ]] && losetup --direct-io=on /dev/loop7
 uname -a
 "$helper/power-boot-report"
 "$bb" hostname moto-vegas
@@ -125,9 +128,28 @@ if (( gpu )) && ! timeout -k 2 60 "$helper/gpu-prepare" >>/var/log/vegas/gpu-pre
   echo 'GPU preparation failed; using the original software desktop.'
 fi
 
+# The shell keeps notifications across boots. A card boot's SD warning must
+# not reappear after the next internal-storage boot.
+if [[ $(cut -d' ' -f1 /run/vegas-boot-source 2>/dev/null) != card ]]; then
+  grep -l '"app":"Boot","appIcon":"","summary":"Running from the SD card"' \
+    /home/omarchy/.local/state/omarchy/notifications/*.json 2>/dev/null | xargs -r rm -f --
+fi
+
 # Wi-Fi in the background so it never delays the desktop.
 "$helper/wifi-up" >>/var/log/vegas/wifi.log 2>&1 &
 
 runuser -u omarchy -- env HOME=/home/omarchy USER=omarchy LOGNAME=omarchy \
   /usr/local/bin/vegas-desktop >>/var/log/vegas/desktop.log 2>&1 &
+
+# Android's boot_control HAL normally does this. Once the desktop has stayed
+# up for a minute, mark this slot's boot successful so the bootloader stops
+# spending its tries, and keep the other slot (old stock Android, which would
+# format userdata) out of the fallback order. An early failure still costs a try.
+(
+  sleep 60
+  pgrep -x Hyprland >/dev/null || exit 0
+  /usr/local/sbin/vegas-bootctrl mark-successful
+  /usr/local/sbin/vegas-bootctrl disable-other
+  /usr/local/sbin/vegas-bootctrl status
+) >>/var/log/vegas/bootctrl.log 2>&1 &
 while true; do wait -n || sleep 1; done

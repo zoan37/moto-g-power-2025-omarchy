@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "vegas.bootsource",
+  "name": "SD boot badge",
+  "version": "1.0.0",
+  "description": "Red SD badge while the desktop runs from the microSD rescue copy",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "BootSource.qml"},
+  "barWidget": {"displayName": "SD boot badge", "defaultSection": "left", "allowMultiple": false}
+}

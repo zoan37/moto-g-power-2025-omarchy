@@ -13,5 +13,6 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("flock -n $XDG_RUNTIME_DIR/vegas-touch.lock vegas-touch-pointer >>$HOME/.local/state/vegas/touch.log 2>&1")
   end
   hl.exec_cmd("flock -n $XDG_RUNTIME_DIR/vegas-keyboard.lock vegas-keyboard >>$HOME/.local/state/vegas/keyboard.log 2>&1")
+  hl.exec_cmd("/usr/local/bin/vegas-boot-source-notify")
   hl.exec_cmd("flock -n $XDG_RUNTIME_DIR/vegas-terminal.lock foot --title='Omarchy - Moto G Power 2025'")
 end)

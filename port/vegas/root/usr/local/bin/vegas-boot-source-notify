@@ -1,0 +1,11 @@
+#!/bin/bash
+# Warn at login when the ramdisk booted the microSD rescue copy instead of the
+# internal UFS root. The bar's red SD badge stays for the whole session.
+read -r source reason </run/vegas-boot-source 2>/dev/null || exit 0
+[[ $source == card ]] || exit 0
+case $reason in
+  prefer-card) why='The card has a prefer-card file, so it was chosen on purpose.' ;;
+  *) why='Internal storage was missing or failed its filesystem check.' ;;
+esac
+omarchy-notification-wait 60 || true
+notify-send -u critical -a 'Boot' 'Running from the SD card' "This is the slow rescue copy. $why"

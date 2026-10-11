@@ -60,7 +60,7 @@ def main():
         target = staging / 'www/cgi-bin' / name
         shutil.copy2(ROOT / 'bringup' / name, target)
         target.chmod(0o755)
-    for name in ['card-guard', 'card-close']:
+    for name in ['card-guard', 'card-close', 'ufs-guard']:
         shutil.copy2(ROOT / 'bringup' / name, staging / 'bin' / name)
         (staging / 'bin' / name).chmod(0o755)
     modules = ROOT / 'artifacts/vegas-linux-bringup/vendor_boot/root/lib/modules'

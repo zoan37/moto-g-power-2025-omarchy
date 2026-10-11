@@ -54,11 +54,19 @@ def main():
     cid = progress['cid']
     if not progress['verified'] or len(cid) != 32 or any(c not in '0123456789abcdefABCDEF' for c in cid):
         raise SystemExit('Missing verified private microSD checkpoint')
+    # The root is the internal ext4 inside userdata (loop7), or the
+    # CID-checked microSD rescue copy.
     guard = ('set -e\n'
-             '[[ $(findmnt -n -o SOURCE /) == "/dev/mmcblk0p1[/omarchy]" ]]\n'
+             'root_source=$(findmnt -n -o SOURCE /)\n'
+             'if [[ $root_source == "/dev/mmcblk0p1[/omarchy]" ]]; then\n'
+             f'  [[ $(cat /sys/class/block/mmcblk0/device/cid) == {shlex.quote(cid)} ]]\n'
+             'else\n'
+             '  [[ $root_source == /dev/loop7 ]]\n'
+             '  [[ $(blkid -s LABEL -o value /dev/loop7) == vegas-omarchy ]]\n'
+             '  [[ $(blkid -s PART_ENTRY_NAME -o value -p "$(losetup -n -O BACK-FILE /dev/loop7)") == userdata ]]\n'
+             'fi\n'
              '[[ $(uname -r) == "5.15.180-android13-8-00021-g46a5565a0982-ab13743836" ]]\n'
-             '[[ $(cat /proc/sys/kernel/hostname) == moto-vegas ]]\n'
-             f'[[ $(cat /sys/class/block/mmcblk0/device/cid) == {shlex.quote(cid)} ]]\n')
+             '[[ $(cat /proc/sys/kernel/hostname) == moto-vegas ]]\n')
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def post(script):

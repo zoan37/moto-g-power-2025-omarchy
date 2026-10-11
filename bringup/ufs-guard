@@ -1,0 +1,38 @@
+#!/bin/sh
+# Sourced by init. The desktop root is an ext4 filesystem labelled
+# vegas-omarchy that starts 24 GiB into the internal UFS userdata partition.
+# Motorola's bootloader rejects any change to the GPT (it boots only its own
+# 85-partition layout), so the root lives inside userdata behind a loop
+# device; the first 24 GiB stay free for a future Android userdata.
+export PATH=/bin
+UFS_OFFSET=25769803776
+UFS_LOOP=/dev/loop7
+fail() { echo "UFS_ERROR:$*"; exit 1; }
+find_userdata() {
+    for event in /sys/class/block/sd*/uevent; do
+        grep -q '^PARTNAME=userdata$' "$event" || continue
+        grep -q '^DEVTYPE=partition$' "$event" || continue
+        echo "/dev/$(sed -n 's/^DEVNAME=//p' "$event")"
+        return 0
+    done
+    return 1
+}
+mount_ufs() {
+    [ -e /etc/mtab ] || ln -s /proc/mounts /etc/mtab
+    dev=$(find_userdata) || fail 'userdata partition missing'
+    [ -b "$dev" ] || fail "no device node for $dev"
+    [ -b "$UFS_LOOP" ] || fail "no $UFS_LOOP"
+    losetup "$UFS_LOOP" >/dev/null 2>&1 || losetup -o "$UFS_OFFSET" "$UFS_LOOP" "$dev" || fail 'losetup failed'
+    blkid "$UFS_LOOP" | grep -q 'LABEL="vegas-omarchy"' || fail 'vegas-omarchy label missing'
+    blkid "$UFS_LOOP" | grep -q 'TYPE="ext4"' || fail 'not ext4'
+    # Preen only: 0 clean, 1 repaired. Anything else falls back to the card.
+    e2fsck -p "$UFS_LOOP" >>/run/ufs-fsck.log 2>&1
+    [ $? -le 1 ] || fail 'filesystem check failed'
+    mkdir -p /mnt/ufs
+    grep -q " /mnt/ufs " /proc/mounts || mount -t ext4 -o noatime "$UFS_LOOP" /mnt/ufs || fail 'mount failed'
+}
+release_ufs() {
+    grep -q " /mnt/ufs " /proc/mounts && umount /mnt/ufs
+    losetup -d "$UFS_LOOP" 2>/dev/null
+    return 0
+}

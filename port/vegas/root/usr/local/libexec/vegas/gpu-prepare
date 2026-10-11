@@ -2,7 +2,8 @@
 # Optional, one-boot native Mali trial. Called by the native root supervisor.
 set -euo pipefail
 [[ $(id -u) == 0 ]]
-[[ $(findmnt -n -o SOURCE /) == '/dev/mmcblk0p1[/omarchy]' ]]
+root_source=$(findmnt -n -o SOURCE /)
+[[ $root_source == '/dev/mmcblk0p1[/omarchy]' || $root_source == /dev/loop7 ]]
 [[ $(uname -r) == '5.15.180-android13-8-00021-g46a5565a0982-ab13743836' ]]
 [[ $(cat /proc/sys/kernel/hostname) == moto-vegas ]]
 [[ $(cat /sys/class/power_supply/battery/temp) -lt 350 ]]

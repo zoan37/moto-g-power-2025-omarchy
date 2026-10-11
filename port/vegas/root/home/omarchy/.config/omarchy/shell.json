@@ -16,6 +16,9 @@
           "id": "omarchy.menu"
         },
         {
+          "id": "vegas.bootsource"
+        },
+        {
           "id": "vegas.keyboard"
         },
         {
@@ -29,6 +32,9 @@
         }
       ],
       "right": [
+        {
+          "id": "vegas.apps"
+        },
         {
           "id": "omarchy.monitor"
         },

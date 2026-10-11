@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "vegas.apps",
+  "name": "Phone apps",
+  "version": "1.0.0",
+  "description": "Tap an app icon to open it, or switch to it if it is already open",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "Apps.qml"},
+  "barWidget": {"displayName": "Phone apps", "defaultSection": "right", "allowMultiple": false}
+}

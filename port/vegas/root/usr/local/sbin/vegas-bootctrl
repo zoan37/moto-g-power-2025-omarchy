@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Read or update the A/B boot control block in misc (AOSP bootloader_control).
+
+Android's boot_control HAL marks each good boot successful; without it the
+bootloader spends one of slot b's tries per boot and eventually falls back to
+slot a (old stock Android). Native Linux does the same job here:
+
+  vegas-bootctrl status
+  vegas-bootctrl mark-successful     # current slot: successful, tries kept
+  vegas-bootctrl disable-other       # other slot: priority 0, tries 0
+"""
+import os
+import struct
+import sys
+import zlib
+
+OFFSET = 2048
+MAGIC = 0x42414342  # "BCAB"
+
+
+def misc_device():
+    for name in sorted(os.listdir('/sys/class/block')):
+        try:
+            with open(f'/sys/class/block/{name}/uevent') as f:
+                if 'PARTNAME=misc\n' in f.read():
+                    return f'/dev/{name}'
+        except OSError:
+            pass
+    raise SystemExit('misc partition not found')
+
+
+def current_slot():
+    with open('/proc/cmdline') as f:
+        cmdline = f.read()
+    try:
+        with open('/proc/bootconfig') as f:
+            cmdline += ' ' + f.read().replace('"', '').replace(' = ', '=')
+    except OSError:
+        pass
+    for token in cmdline.replace('\n', ' ').split():
+        if token.startswith('androidboot.slot_suffix='):
+            return token.split('=', 1)[1].lstrip('_')
+    raise SystemExit('slot suffix not found in cmdline/bootconfig')
+
+
+def read(dev):
+    with open(dev, 'rb') as f:
+        f.seek(OFFSET)
+        block = bytearray(f.read(32))
+    magic, version, nb = struct.unpack_from('<IBB', block, 4)
+    if magic != MAGIC or version != 1:
+        raise SystemExit(f'unexpected boot control block: {block.hex()}')
+    if zlib.crc32(block[:28]) != struct.unpack_from('<I', block, 28)[0]:
+        raise SystemExit('boot control CRC mismatch; refusing to touch it')
+    return block, nb & 7
+
+
+def slot(block, index):
+    lo, hi = block[12 + 2 * index], block[13 + 2 * index]
+    return {'priority': lo & 15, 'tries': (lo >> 4) & 7, 'successful': lo >> 7,
+            'verity_corrupted': hi & 1}
+
+
+def set_slot(block, index, priority, tries, successful):
+    block[12 + 2 * index] = (priority & 15) | ((tries & 7) << 4) | ((successful & 1) << 7)
+
+
+def write(dev, block):
+    struct.pack_into('<I', block, 28, zlib.crc32(block[:28]))
+    with open(dev, 'r+b') as f:
+        f.seek(OFFSET)
+        f.write(block)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def main():
+    action = sys.argv[1] if len(sys.argv) > 1 else 'status'
+    dev = misc_device()
+    block, count = read(dev)
+    names = 'abcd'[:count]
+    me = names.index(current_slot())
+    if action == 'status':
+        for i, name in enumerate(names):
+            print(name + ('*' if i == me else ' '), slot(block, i))
+        return
+    if action == 'mark-successful':
+        s = slot(block, me)
+        if s['successful']:
+            return
+        set_slot(block, me, s['priority'], s['tries'], 1)
+    elif action == 'disable-other':
+        changed = False
+        for i in range(count):
+            s = slot(block, i)
+            if i != me and (s['priority'] or s['tries'] or s['successful']):
+                set_slot(block, i, 0, 0, 0)
+                changed = True
+        if not changed:
+            return
+        if slot(block, me)['priority'] == 0:
+            raise SystemExit('current slot has priority 0; refusing')
+    else:
+        raise SystemExit(__doc__)
+    write(dev, block)
+    read(dev)
+
+
+if __name__ == '__main__':
+    main()
