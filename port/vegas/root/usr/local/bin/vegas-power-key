@@ -9,6 +9,11 @@ touch controller is reset with it, so stray touches don't reach apps. A key
 from the panel's "double-tap" gesture device wakes the screen too. While the
 screen is off, $XDG_RUNTIME_DIR/vegas-screen-off lets the root autosleep
 service suspend the phone; the power key wakes it (wakeup-source in the DT).
+
+Screen timeout, as on Android: after ~/.config/vegas/screen-timeout seconds
+(default 60, 0 = never) without a touch or key, the screen turns off. It stays
+on while audio plays (video) and while USB data is connected (Android's "stay
+awake while charging" developer option; keeps the laptop's screenshots working).
 Runs in the desktop session (autostart.lua).
 """
 import fcntl
@@ -24,6 +29,8 @@ import time
 EV_KEY = 1
 KEY_POWER = 116
 LONG_PRESS_S = 0.6
+TIMEOUT_FILE = os.path.expanduser('~/.config/vegas/screen-timeout')
+DEFAULT_TIMEOUT_S = 60
 EVENT = struct.Struct('llHHi')        # struct input_event on aarch64
 
 
@@ -73,6 +80,34 @@ def set_screen(on):
     log('screen', 'on' if on else 'off')
 
 
+def screen_timeout():
+    try:
+        with open(TIMEOUT_FILE) as f:
+            return max(0, int(f.read().strip()))
+    except (OSError, ValueError):
+        return DEFAULT_TIMEOUT_S
+
+
+def keep_awake():
+    # VEGAS_TIMEOUT_IGNORE_USB=1: for testing the timeout over the USB link.
+    usb = [] if os.environ.get('VEGAS_TIMEOUT_IGNORE_USB') == '1' else glob.glob('/sys/class/udc/*/state')
+    for state in usb:
+        try:
+            with open(state) as f:
+                if f.read().strip() == 'configured':
+                    return 'USB data connected'
+        except OSError:
+            pass
+    for status in glob.glob('/proc/asound/card*/pcm*p/sub*/status'):
+        try:
+            with open(status) as f:
+                if 'RUNNING' in f.read():
+                    return 'audio playing'
+        except OSError:
+            pass
+    return ''
+
+
 def power_menu():
     if not screen_on():
         set_screen(True)
@@ -94,20 +129,35 @@ def main():
     if power is None:
         sys.exit('mtk-pmic-keys not found')
     tap = open_device(b'double-tap')
-    fds = [power] + ([tap] if tap is not None else [])
+    # Activity only (no grab): any touch or other key restarts the timeout.
+    activity = [fd for fd in (open_device(b'ILITEK_TDDI'), open_device(b'mtk-kpd')) if fd is not None]
+    fds = [power] + ([tap] if tap is not None else []) + activity
+    last_input = time.monotonic()
     if screen_on() and os.path.exists(SCREEN_OFF):
         os.unlink(SCREEN_OFF)       # stale, from a previous session
     pressed_at = None        # monotonic time of the current power key press
     long_fired = False
     while True:
-        timeout = None
+        timeout = 5.0                  # re-check the screen timeout this often
         if pressed_at is not None and not long_fired:
             timeout = max(0.0, pressed_at + LONG_PRESS_S - time.monotonic())
         ready, _, _ = select.select(fds, [], [], timeout)
+        if ready:
+            last_input = time.monotonic()
+        idle_limit = screen_timeout()
+        if (idle_limit and pressed_at is None and time.monotonic() - last_input >= idle_limit
+                and not keep_awake() and screen_on()):
+            log('idle %ds' % idle_limit)
+            set_screen(False)
+            last_input = time.monotonic()
         if pressed_at is not None and not long_fired and time.monotonic() - pressed_at >= LONG_PRESS_S:
             long_fired = True
             power_menu()
         for fd in ready:
+            if fd in activity:
+                for _ in events(fd):
+                    pass
+                continue
             for etype, code, value in events(fd):
                 if etype != EV_KEY or value == 2:      # ignore autorepeat
                     continue
