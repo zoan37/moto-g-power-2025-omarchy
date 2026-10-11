@@ -81,6 +81,17 @@ when new posts arrive.
 91% CPU). There is no hardware video decode on this kernel, so Chrome decodes in software. Turning
 off autoplay in X's settings avoids this.
 
+## GED headroom: motion without touching
+
+A motion test page (white blocks sliding at 240/480/960 px/s, rAF fps counter) juddered whenever
+the screen wasn't being touched and was solid while touching. With `dvfs_loading_mode = 0`, GED
+raises the clock only above 100 − `timer_base_dvfs_margin` percent load (default 30, so 70%
+busy). The animation sat at OPP 39–42 (~400–460 MHz) and 50–80% busy, right at the threshold,
+and frames missed their deadlines. Margin 60: 98 fps and still climbing; **margin 70: 121 fps**,
+with the clock settling where the GPU is ~30% busy. The user confirmed the blocks stay solid
+without touching. native-init now sets margin 70 on GPU boots. Touch boost stays, because GED
+climbs only one OPP per 100 ms.
+
 ## Without autoplay video, and what didn't help
 
 With X's video URLs blocked in the bench (like setting X's autoplay to "Never"), X at 120 Hz runs

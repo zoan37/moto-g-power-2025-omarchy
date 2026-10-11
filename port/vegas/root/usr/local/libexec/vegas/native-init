@@ -144,8 +144,14 @@ fi
 # that only CSF Malis fill in; on this JM G57 it always sees 0% and holds the
 # GPU at 390 MHz. Mode 0 uses active time. vegas-gpu-boost adds Android-style
 # touch boost, since GED climbs only 1-3 OPPs per 100 ms.
+# GED only raises the clock above 100 - margin percent load (default margin 30,
+# i.e. 70% busy). A steady animation sat at ~400 MHz and 50-80% busy, and
+# frames missed 120 Hz deadlines (visible judder on a motion test). Margin 70
+# targets ~30% busy, so the clock rises while anything animates and idles down
+# when the screen is still.
 if [[ -f /run/vegas-gpu-ready ]]; then
   echo 0 >/sys/kernel/ged/hal/dvfs_loading_mode
+  echo 70 >/sys/kernel/ged/hal/timer_base_dvfs_margin
   /usr/local/sbin/vegas-gpu-boost >>/var/log/vegas/gpu-boost.log 2>&1 &
 fi
 
