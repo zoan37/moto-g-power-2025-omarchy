@@ -116,6 +116,13 @@ Now: native-init starts the desktop in `top-app` with `latency_sensitive = 1`, a
 OPP pin while touching (released 1.5 s after the last touch, same 37 °C guard). Chrome's critical
 threads spent ~70% of their time on the A55s before this (sampled `psr`).
 
+### PELT multiplier
+
+Android sets `sched_pelt_multiplier = 4` at boot on this phone (vendor init.cgroup.rc; see
+notes/cpu-boost-research-20261011.md). On top of top-app + touch boost, with the synthetic feed,
+GPU raster, 120 Hz and 2 rounds: multiplier 1 gives 111.7–114.5 fps and 5.6–7.1% late; **4 gives
+116.1–117.4 fps and 3.2–4.3% late**. native-init sets it.
+
 ## Without autoplay video, and what didn't help
 
 With X's video URLs blocked in the bench (like setting X's autoplay to "Never"), X at 120 Hz runs

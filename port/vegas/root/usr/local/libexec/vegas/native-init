@@ -166,6 +166,10 @@ fi
 # run in top-app with cpu.uclamp.latency_sensitive, which makes EAS place their
 # wakeups on idle CPUs (CPU-raster scrolling: 13% -> 5% late frames). The touch
 # boost in vegas-gpu-boost adds CPU frequency floors while touching.
+# As Android on this phone (init.cgroup.rc): 4x faster PELT load tracking
+# (8 ms half-life), so clocks and placement follow a scroll within a frame or
+# two. Synthetic feed at 120 Hz: 5.6-7.1% late frames -> 3.2-4.3%.
+echo 4 >/proc/sys/kernel/sched_pelt_multiplier
 top=/sys/fs/cgroup/top-app
 mountpoint -q /sys/fs/cgroup || mount -t cgroup2 -o nsdelegate none /sys/fs/cgroup
 if echo '+cpu +cpuset' >/sys/fs/cgroup/cgroup.subtree_control && mkdir -p "$top"; then
