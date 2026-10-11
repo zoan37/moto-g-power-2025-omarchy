@@ -18,7 +18,7 @@ import qs.Ui
 //   [ Do Not Disturb ] [ Airplane mode ]
 //   [ Keyboard ]       [ Screenshot ]
 //   [ Omarchy ]        [ Power ]
-//   brightness ───────●──────
+//   brightness ───────●──────   (icon: adaptive brightness on/off)
 //   volume     ─────●────────  Speaker
 //   (Wi-Fi networks, when the Wi-Fi tile is tapped)
 //   recent notifications
@@ -49,6 +49,7 @@ Item {
   property string batteryStatus: ""
   property real batteryTemp: 0
   property string wifiState: ""
+  property bool autoBrightness: true
   property var networks: []
   property var notifications: []
 
@@ -122,6 +123,7 @@ Item {
       "echo \"vol=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null)\"\n" +
       "echo \"sink=$(wpctl inspect @DEFAULT_AUDIO_SINK@ 2>/dev/null | sed -n 's/.*node.description = \"\\(.*\\)\"/\\1/p' | head -1)\"\n" +
       "echo \"wifi=$(wpa_cli -i wlan0 status 2>/dev/null | sed -n 's/^wpa_state=//p')\"\n" +
+      "echo \"auto=$(cat \"$HOME/.config/vegas/auto-brightness\" 2>/dev/null || echo on)\"\n" +
       "vegas-wifi list 2>/dev/null | sed 's/^/net=/'\n" +
       "ls -1t \"$1\"/*.json 2>/dev/null | head -5 | while read -r f; do printf 'note=%s\\n' \"$(head -1 \"$f\")\"; done",
       "--", root.historyDir]
@@ -163,6 +165,8 @@ Item {
         root.sink = value.replace(/^Built-in Audio /, "")
       } else if (key === "wifi") {
         root.wifiState = value
+      } else if (key === "auto") {
+        root.autoBrightness = value.trim() !== "off"
       } else if (key === "net") {
         root.parseNetwork(value, nets)
       } else if (key === "note") {
@@ -220,6 +224,13 @@ Item {
     id: volumeProc
     onExited: root.flushVolume()
   }
+  // Adaptive brightness (vegas-autobrightness): the slider then sets its offset.
+  function toggleAutoBrightness() {
+    root.autoBrightness = !root.autoBrightness
+    root.run(["bash", "-c", "mkdir -p \"$HOME/.config/vegas\" && echo " + (root.autoBrightness ? "on" : "off")
+              + " > \"$HOME/.config/vegas/auto-brightness\""])
+  }
+
   function toggleMute() {
     root.muted = !root.muted
     root.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
@@ -606,10 +617,15 @@ Item {
               height: parent.height
               horizontalAlignment: Text.AlignHCenter
               verticalAlignment: Text.AlignVCenter
-              text: root.glyph(0xf00df)
+              text: root.glyph(root.autoBrightness ? 0xf00e1 : 0xf00df)
               font.family: Style.font.family
               font.pixelSize: 22
-              color: shade.fg
+              color: root.autoBrightness ? Color.accent : shade.fg
+              // Tap: adaptive brightness on/off.
+              MouseArea {
+                anchors.fill: parent
+                onReleased: if (containsMouse) root.toggleAutoBrightness()
+              }
             }
             PanelSlider {
               width: parent.width - 38

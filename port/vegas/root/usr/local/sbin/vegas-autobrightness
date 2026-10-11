@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Adaptive brightness from the ambient light sensor, like Android's.
+
+Reads the sensor hub's light sensor (Android type 5, Sensortek STK3A5x) through
+/dev/hf_manager, smooths it (brightens within ~2 s, dims over ~10 s), and maps
+lux to the backlight with a log curve. A manual change to the backlight (the
+quick-settings slider) is learned as a personal offset at the current light
+level, kept in /var/lib/vegas/autobrightness.json, as Android does.
+
+Off while the screen is off (the sensor is disabled then) and while
+~omarchy/.config/vegas/auto-brightness says "off". Runs as root
+(vegas-autobrightness.service).
+"""
+import glob
+import json
+import math
+import os
+import select
+import struct
+import time
+
+HF = '/dev/hf_manager'
+LIGHT = 5
+EVENT = 76                         # struct hf_manager_event
+SETTING = '/home/omarchy/.config/vegas/auto-brightness'
+SCREEN_OFF = '/run/user/1000/vegas-screen-off'
+STATE = '/var/lib/vegas/autobrightness.json'
+BACKLIGHT = sorted(glob.glob('/sys/class/backlight/*'))[0]
+# (lux, fraction of max): roughly Android's default curve.
+CURVE = [(0, 0.02), (5, 0.07), (30, 0.16), (150, 0.32), (600, 0.55), (2500, 0.80), (10000, 1.0)]
+TICK = 0.1
+
+
+def log(*args):
+    print(time.strftime('%H:%M:%S'), *args, flush=True)
+
+
+def curve(lux):
+    lux = max(0.0, lux)
+    for (l0, f0), (l1, f1) in zip(CURVE, CURVE[1:]):
+        if lux <= l1:
+            a, b = math.log10(l0 + 1), math.log10(l1 + 1)
+            return f0 + (f1 - f0) * (math.log10(lux + 1) - a) / (b - a)
+    return CURVE[-1][1]
+
+
+def read_int(path, default=0):
+    try:
+        with open(path) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return default
+
+
+def enabled():
+    try:
+        with open(SETTING) as f:
+            return f.read().strip() != 'off'
+    except OSError:
+        return True
+
+
+def sensor(fd, on):
+    data = struct.pack('<qq', 200_000_000, 0)            # 5 Hz, no batching
+    os.write(fd, struct.pack('<BBBx', LIGHT, 1 if on else 0, len(data)) + data + bytes(48 - len(data)))
+
+
+def main():
+    maximum = read_int(f'{BACKLIGHT}/max_brightness', 2047)
+    try:
+        with open(STATE) as f:
+            offset = float(json.load(f).get('offset', 1.0))
+        seeded = True
+    except (OSError, ValueError):
+        offset = 1.0
+        seeded = False             # first run: start from the user's own brightness
+    fd = os.open(HF, os.O_RDWR | os.O_NONBLOCK)
+    active = False
+    lux = None                     # smoothed
+    last_set = None                # raw value we last wrote
+    last_tick = time.monotonic()
+    while True:
+        want = enabled() and not os.path.exists(SCREEN_OFF)
+        if want != active:
+            sensor(fd, want)
+            active = want
+            lux, last_set = None, None
+            log('active' if want else 'idle')
+        ready, _, _ = select.select([fd], [], [], TICK if active else 1.0)
+        raw_lux = None
+        if ready:
+            try:
+                buf = os.read(fd, EVENT * 32)
+            except BlockingIOError:
+                buf = b''
+            for i in range(0, len(buf) - EVENT + 1, EVENT):
+                _, kind, _, action = struct.unpack_from('<qBBBx', buf, i)
+                if kind == LIGHT and action == 0:
+                    raw_lux = struct.unpack_from('<i', buf, i + 12)[0]
+        if not active:
+            continue
+        now = time.monotonic()
+        dt, last_tick = now - last_tick, now
+        if raw_lux is not None:
+            if lux is None:
+                lux = float(raw_lux)
+            else:
+                tau = 1.5 if raw_lux > lux else 8.0          # brighten fast, dim slowly
+                lux += (raw_lux - lux) * min(1.0, dt / tau)
+        if lux is None:
+            continue
+        current = read_int(f'{BACKLIGHT}/brightness', last_set or 0)
+        # Someone else moved the backlight (the slider), or this is the first
+        # run: learn the offset from it.
+        if not seeded or (last_set is not None and abs(current - last_set) > max(4, last_set * 0.03)):
+            seeded = True
+            base = curve(lux) * maximum
+            offset = min(4.0, max(0.25, current / max(1.0, base)))
+            with open(STATE + '.new', 'w') as f:
+                json.dump({'offset': offset, 'lux': round(lux, 1)}, f)
+            os.replace(STATE + '.new', STATE)
+            log('learned offset %.2f at %.0f lux (brightness %d)' % (offset, lux, current))
+            last_set = current
+            continue
+        target = int(round(min(1.0, curve(lux) * offset) * maximum))
+        target = max(int(maximum * 0.01), target)
+        if last_set is None:
+            last_set = current
+        # Ramp: at most ~4% of the range per tick, no change within 1.5%.
+        diff = target - current
+        if abs(diff) <= max(2, maximum * 0.015) and last_set == current:
+            continue
+        step = max(1, int(maximum * 0.04))
+        new = current + max(-step, min(step, diff))
+        with open(f'{BACKLIGHT}/brightness', 'w') as f:
+            f.write(str(new))
+        last_set = new
+
+
+if __name__ == '__main__':
+    main()

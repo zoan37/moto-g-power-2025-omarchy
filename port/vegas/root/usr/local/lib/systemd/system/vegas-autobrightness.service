@@ -1,0 +1,15 @@
+# Adaptive brightness from the ambient light sensor (/usr/local/sbin/vegas-autobrightness).
+[Unit]
+Description=Adaptive brightness (ambient light sensor)
+Requires=vegas-sensors.service
+After=vegas-sensors.service
+
+[Service]
+ExecStart=/usr/local/sbin/vegas-autobrightness
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/vegas/autobrightness.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

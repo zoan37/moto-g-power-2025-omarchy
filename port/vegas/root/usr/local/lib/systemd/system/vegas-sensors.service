@@ -1,0 +1,14 @@
+# Sensor hub (SCP): hf_manager + sensorhub vendor modules -> /dev/hf_manager.
+[Unit]
+Description=MediaTek sensor hub (light, proximity, accelerometer, ...)
+After=local-fs.target vegas-audio.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/vegas/sensors-prepare
+StandardOutput=append:/var/log/vegas/sensors.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target
