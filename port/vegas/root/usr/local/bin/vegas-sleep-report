@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Summarize /var/log/vegas/autosleep.log: how much of each screen-off stretch
+the phone spent asleep, what woke it, and the battery drain per hour.
+
+    vegas-sleep-report [--since HH:MM] [LOG]
+
+A stretch is a run of sleep lines without a gap of more than 10 minutes (the
+sync windows wake it every 15 min while asleep, so longer gaps mean the screen
+was on or the phone was plugged in). The log has times without dates; crossing
+midnight is handled by noticing the clock going backwards.
+"""
+import collections
+import re
+import sys
+
+LINE = re.compile(r'^(\d\d):(\d\d):(\d\d) slept (\d+)s, woke: (.*?)(?:, battery (\d+)%)?$')
+
+
+def main():
+    args = sys.argv[1:]
+    since = None
+    if args[:1] == ['--since']:
+        h, m = args[1].split(':')
+        since = int(h) * 3600 + int(m) * 60
+        args = args[2:]
+    path = args[0] if args else '/var/log/vegas/autosleep.log'
+    events, day, last = [], 0, None
+    for line in open(path, errors='replace'):
+        m = LINE.match(line.strip())
+        if not m:
+            continue
+        t = int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3])
+        if last is not None and t < last - 3600:
+            day += 1
+        last = t
+        if since is not None and day == 0 and t < since:
+            continue
+        reason = re.sub(r'IRQ \d+, ', '', m[5])
+        events.append((day * 86400 + t, int(m[4]), reason, int(m[6]) if m[6] else None))
+    if not events:
+        print('no sleep lines (screen never off on battery?)')
+        return
+    stretches, cur = [], [events[0]]
+    for e in events[1:]:
+        if e[0] - cur[-1][0] > 600:
+            stretches.append(cur)
+            cur = []
+        cur.append(e)
+    stretches.append(cur)
+    for s in stretches:
+        start, end = s[0][0] - s[0][1], s[-1][0]
+        span = max(1, end - start)
+        asleep = sum(e[1] for e in s)
+        wakes = collections.Counter(e[2] for e in s)
+        bats = [e[3] for e in s if e[3] is not None]
+        fmt = lambda x: '%02d:%02d' % (x % 86400 // 3600, x % 3600 // 60)
+        line = '%s-%s  %5.1f h  asleep %3.0f%%  %4d wakes' % (fmt(start), fmt(end), span / 3600, 100 * asleep / span, len(s))
+        if len(bats) >= 2 and span > 1800:
+            line += '  battery %d%% -> %d%% (%.2f %%/h)' % (bats[0], bats[-1], (bats[0] - bats[-1]) / (span / 3600))
+        print(line)
+        print('    woke by: ' + ', '.join('%s %d' % kv for kv in wakes.most_common(5)))
+
+
+if __name__ == '__main__':
+    main()
