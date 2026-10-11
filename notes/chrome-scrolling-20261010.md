@@ -39,6 +39,23 @@ through the real Ilitek → wvkbd → foot path (`scripts/measure-vegas-input.py
 on or off on the GPU: tap → PTY median 6.4 ms both, commit → frame callback 17 vs 15 ms. The old
 ~100 ms vfr penalty (notes/direct-drm-latency-20261007.md) was specific to llvmpipe.
 
+## X itself, and the refresh rate
+
+On X (an alt account the user offered for scripted swipes; temporary profile copy, deleted
+afterwards), libmali + vfr, 5 swipes each. Late = gap > 1.5 refresh periods:
+
+| Panel rate | fps | median gap | late |
+|---|---:|---:|---:|
+| 120 Hz | 70 | 13 ms | 52% |
+| 90 Hz | 61 | 11 ms | 38% |
+| **60 Hz** | 54 | 16.7 ms | **10%** |
+
+X's main thread is cheap (`ProxyMain::BeginMainFrame` ≈ 4 ms). Chrome's GPU draw
+(`StartDrawToSwapStart`) is ≈ 11–12 ms, more than the 8.3 ms budget at 120 Hz, so frames alternate
+between one and two refreshes. That is the judder. At 60 Hz nearly every frame is on time, and the
+user found it "super smooth". **60 Hz is the direct-DRM default now** (`vegas-refresh 60|90|120`);
+`vegas-desktop-drm` used to hard-code 120 Hz and ignore the setting.
+
 ## Where the time went
 
 With Mesa kbase compositing, the page itself was cheap (`ProxyMain::BeginMainFrame` ≈ 5 ms). The
@@ -60,6 +77,9 @@ buffers with Hyprland as dmabufs (GBM on card0), so there was no CPU readback.
   from it).
 
 ## Next ideas
+
+- Get Chrome's GPU draw under 8.3 ms for a steady 120 Hz: check why Hyprland's direct scanout
+  did not engage for a fullscreen client, and try Hyprland on libmali too.
 
 - Remaining late frames (~40%) with libmali: profile the GPU process and Hyprland again (the swap →
   presentation share), and try Hyprland itself on libmali (not yet tested as a compositor driver).
