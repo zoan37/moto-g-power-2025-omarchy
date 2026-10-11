@@ -76,6 +76,9 @@ def main():
     parser.add_argument('--label', default='baseline-30hz')
     parser.add_argument('--interval-ms', type=int, default=500)
     parser.add_argument('--hold-ms', type=int, default=60)
+    parser.add_argument('--a-row', type=float, default=0.375,
+                        help='vertical centre of the "a" row as a fraction of the keyboard '
+                             '(0.375: four-row mobile layer; 0.498: old five-row phone layer)')
     args = parser.parse_args()
     assert re.fullmatch(r'[a-zA-Z0-9_-]+', args.label)
     assert 10 <= args.hold_ms < args.interval_ms <= 1000
@@ -89,9 +92,9 @@ def main():
     monitor = json.loads(command(hc + ' -j monitors\n').split('NATIVE_COMMAND_STATUS:')[0])[0]
     logical_w = monitor['width'] / monitor['scale']
     logical_h = monitor['height'] / monitor['scale']
-    # "a" sits ~10% across the keyboard, in the middle (third) of its five rows.
+    # "a" sits ~10% across the keyboard, in the row given by --a-row.
     tap_x = (kb['x'] + kb['w'] * 0.10) / logical_w
-    tap_y = (kb['y'] + kb['h'] * 0.498) / logical_h
+    tap_y = (kb['y'] + kb['h'] * args.a_row) / logical_h
     script = 'mkdir -p /run/user/1000/vegas-latency\nrm -f /run/user/1000/vegas-latency/ready\n'
     for name, content in [('client.py', CLIENT), ('inject.py', INJECT)]:
         script += f"printf '%s' '{base64.b64encode(content.encode()).decode()}' | base64 -d >/run/user/1000/vegas-latency/{name}\n"

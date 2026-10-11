@@ -47,10 +47,21 @@ def main():
     phone = digits + '\n  {"", "", 0.0, EndRow},\n' + simple
     phone = phone.replace('{"⌨͕", "⌨͔", 1.0, NextLayer', '{"?123", "ABC", 1.0, NextLayer')
     phone = phone.replace('{"Cmp", "Cmp", 1.0, Compose', '{"Esc", "Esc", 1.0, Code, KEY_ESC')
-    layout = replace_once(layout, '\tSimple,', '\tSimple,\n\tPhone,')
-    layout = replace_once(layout, 'static struct key keys_full[], keys_full_wide[]', 'static struct key keys_phone[];\nstatic struct key keys_full[], keys_full_wide[]')
-    layout = replace_once(layout, '  [Simple] =', '  [Phone] = {keys_phone, "latin", "phone", true},\n  [Simple] =')
+    # Gboard/iOS-style four rows: digits, Esc and arrows live on ?123.
+    rows = simple.split('{"⌨͕", "⌨͔", 1.0, NextLayer')[0]
+    mobile = rows + '\n'.join([
+        '  {"?123", "ABC", 1.5, NextLayer, .scheme = 1},',
+        '  {"Ctrl", "Ctrl", 1.0, Mod, Ctrl, .scheme = 1},',
+        '  {",", "\'", 1.0, Code, KEY_COMMA, &layouts[ComposeBracket]},',
+        '  {"", "Tab", 4.0, Code, KEY_SPACE},',
+        '  {".", "?", 1.0, Code, KEY_DOT, &layouts[ComposePunctuation]},',
+        '  {"⏎", "⏎", 1.5, Code, KEY_ENTER, .scheme = 1},',
+        '  {"", "", 0.0, Last},'])
+    layout = replace_once(layout, '\tSimple,', '\tSimple,\n\tPhone,\n\tMobile,')
+    layout = replace_once(layout, 'static struct key keys_full[], keys_full_wide[]', 'static struct key keys_phone[], keys_mobile[];\nstatic struct key keys_full[], keys_full_wide[]')
+    layout = replace_once(layout, '  [Simple] =', '  [Phone] = {keys_phone, "latin", "phone", true},\n  [Mobile] = {keys_mobile, "latin", "mobile", true},\n  [Simple] =')
     layout += '\n/* Vegas: a number row plus the four-row mobile layout. */\nstatic struct key keys_phone[] = {\n' + phone + '\n};\n'
+    layout += '\n/* Vegas: phone-style four rows without a number row. */\nstatic struct key keys_mobile[] = {\n' + mobile + '\n};\n'
     layout_file.write_text(layout)
     main_file = work / 'main.c'
     text = main_file.read_text()
@@ -108,8 +119,9 @@ def main():
     layers = subprocess.run(['qemu-aarch64-static', '-L', str(SYSROOT), str(output), '--list-layers'], capture_output=True, text=True)
     layers.check_returncode()
     assert 'phone' in layers.stdout + layers.stderr
+    assert 'mobile' in layers.stdout + layers.stderr
     manifest = {'base_commit': 'e14b53aff4fd1f471add6b21b3885c2cff945509',
-                'base_files': EXPECTED, 'optimization': '-O2', 'phone_rows': 5,
+                'base_files': EXPECTED, 'optimization': '-O2', 'phone_rows': 5, 'mobile_rows': 4,
                 'immediate_feedback_preserved': True, 'arm_help_and_layers_checked': True,
                 'tested_on_phone': False, 'sha256': hashlib.sha256(output.read_bytes()).hexdigest()}
     (BUILD / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')

@@ -1,12 +1,19 @@
 #!/bin/bash
 # Both autostart and the Keys button use the same geometry and layout.
-# wvkbd sizes are logical pixels: divide by the output scale so the keyboard
-# stays ~675 px (~44 mm) tall on the panel whatever OMARCHY_SCALE is.
+# wvkbd sizes are logical pixels. Divide physical sizes by the scale the
+# panel really runs at (the Display panel can change it after login, so
+# OMARCHY_SCALE may be stale) to keep the keyboard ~620 px (~26%) tall.
 export WVKBD_IMMEDIATE_DRAW=1
-scale=${OMARCHY_SCALE:-1.5}
+scale=$(hyprctl monitors -j 2>/dev/null | jq -r '.[0].scale // empty')
+[[ $scale =~ ^[0-9.]+$ ]] || scale=${OMARCHY_SCALE:-1.5}
 px() { awk -v v="$1" -v s="$scale" 'BEGIN { printf "%d", v / s + 0.5 }'; }
-wvkbd-mobintl -H "$(px 675)" -L "$(px 360)" --fn "Sans $(px 30)" \
-  -l phone,special,full --margin-bottom "$(px 48)" --no-popup "$@" &
+# Phone-style: four rows (digits, Esc and arrows on ?123), rounded dark keys,
+# shown and hidden with text focus like Gboard or the iOS keyboard.
+wvkbd-mobintl -H "$(px 620)" -L "$(px 360)" --fn "Sans $(px 44)" -R "$(px 14)" \
+  -l mobile,special --landscape-layers mobile,special \
+  --bg 121212 --fg 3a3a3c --fg-sp 2a2a2c --press 5c5c60 --press-sp 4a4a4e \
+  --text f2f2f2 --text-sp f2f2f2 \
+  --margin-bottom "$(px 48)" --no-popup --auto "$@" &
 keyboard=$!
 # wvkbd first draws at 1x and only adopts a fractional output scale when its
 # surface is re-created; hide and re-show it once so it renders sharply.
