@@ -1,5 +1,5 @@
 #!/bin/bash
-# Panel rate for the next desktop start. Direct DRM uses 60, 90 or 120 (60 by
+# Panel rate for the next desktop start. Direct DRM uses 60, 90 or 120 (120 by
 # default); the nested Weston path uses 30, 60 or 120.
 setting="$HOME/.config/vegas/refresh-mhz"
 case ${1:-status} in
@@ -8,8 +8,8 @@ case ${1:-status} in
     printf '%s000\n' "$1" >"$setting.new" && mv -f "$setting.new" "$setting"
     printf '%s Hz selected for the next desktop start. Reboot to compare.\n' "$1" ;;
   status)
-    value=$(cat "$setting" 2>/dev/null) || value=60000
-    case $value in 30000|60000|90000|120000) ;; *) value=60000 ;; esac
+    value=$(cat "$setting" 2>/dev/null) || value=120000
+    case $value in 30000|60000|90000|120000) ;; *) value=120000 ;; esac
     printf 'Next desktop: %s Hz (currently running rate may differ).\n' "$((value / 1000))" ;;
   *) printf 'Usage: vegas-refresh 30|60|90|120|status\n' >&2; exit 2 ;;
 esac
