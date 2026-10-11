@@ -12,11 +12,30 @@
 #     endpoint and development; a plain charger still lets it sleep)
 #   - a sound card PCM is running (music with the screen off)
 #   - vegas-power-key isn't running (nothing could turn the screen back on)
+#
+# Sync windows, like Android Doze's maintenance windows: while asleep the RTC
+# wakes the phone every $sync_min minutes and it stays up $sync_s seconds, so
+# Chrome's push connection can reconnect and deliver queued notifications.
+# Wi-Fi power save is on while the screen is off.
+#
+# Wake on Wi-Fi (default; opt out with /var/lib/vegas/no-wake-on-wifi): the
+# firmware's WoWLAN "any" trigger wakes the phone for incoming packets, so a
+# push message (Chrome's GCM connection) arrives at once, as on Android. The
+# firmware can't filter broadcasts (ARP/mDNS also wake it; nl80211 offers only
+# any/disconnect/magic-packet here), so after a Wi-Fi wake the phone stays up
+# only while real traffic keeps arriving: 1 s, extended while wlan0 receives
+# more than $traffic_bytes per second (up to $traffic_max s).
 # Log: /var/log/vegas/autosleep.log (one line per sleep, with the wake reason).
 set -u
 request=/run/user/1000/vegas-screen-off
 delay=${VEGAS_SLEEP_DELAY:-5}      # seconds of screen-off before the first sleep
 grace=${VEGAS_SLEEP_GRACE:-2}      # seconds awake after a wake that isn't the power key
+sync_min=${VEGAS_SLEEP_SYNC_MIN:-15}
+sync_s=${VEGAS_SLEEP_SYNC_S:-30}
+rtc=/sys/class/rtc/rtc0/wakealarm
+traffic_bytes=${VEGAS_SLEEP_TRAFFIC_BYTES:-1500}
+traffic_max=${VEGAS_SLEEP_TRAFFIC_MAX:-15}
+rx=/sys/class/net/wlan0/statistics/rx_bytes
 
 log() { printf '%s %s\n' "$(date +%T)" "$*"; }
 
@@ -42,7 +61,8 @@ sleep_once() {
     if echo mem >/sys/power/state 2>/dev/null; then
       local wake
       wake=$(journalctl -k -o cat --no-pager -S "@$since" 2>/dev/null | sed -n 's/.*Resume caused by //p' | tail -1)
-      log "slept $(( $(date +%s) - since ))s, woke: ${wake:-unknown}"
+      woke=${wake:-unknown}
+      log "slept $(( $(date +%s) - since ))s, woke: $woke, battery $(cat /sys/class/power_supply/battery/capacity)%"
       return 0
     fi
     sleep 1
@@ -51,9 +71,43 @@ sleep_once() {
   return 1
 }
 
-last_reason=''
+wifi_power_save() { iw dev wlan0 set power_save "$1" 2>/dev/null; }
+wake_on_wifi() {
+  if [[ -e /var/lib/vegas/no-wake-on-wifi ]]; then iw phy phy0 wowlan disable 2>/dev/null
+  else iw phy phy0 wowlan enable any 2>/dev/null; fi
+}
+
+# After a Wi-Fi wake: 1 s, then as long as real traffic keeps arriving.
+traffic_grace() {
+  local i before after
+  for (( i = 0; i < traffic_max; i++ )); do
+    before=$(cat "$rx" 2>/dev/null || echo 0)
+    sleep 1
+    after=$(cat "$rx" 2>/dev/null || echo 0)
+    (( after - before > traffic_bytes )) || break
+    [[ -e $request ]] || return
+  done
+  (( i > 0 )) && log "stayed up ${i}s for network traffic"
+}
+
+# A sync window: awake for $sync_s seconds unless the screen comes back on.
+sync_window() {
+  log "sync window ${sync_s}s"
+  local i
+  for (( i = 0; i < sync_s; i++ )); do
+    [[ -e $request ]] || return
+    sleep 1
+  done
+}
+
+last_reason='' next_sync=0 sleeping=0
 while sleep 1; do
   if [[ ! -e $request ]]; then
+    if (( sleeping )); then
+      echo 0 >"$rtc" 2>/dev/null
+      wifi_power_save off
+      sleeping=0 next_sync=0
+    fi
     last_reason=''
     continue
   fi
@@ -65,7 +119,25 @@ while sleep 1; do
     continue
   fi
   last_reason=''
+  if (( ! sleeping )); then
+    sleeping=1
+    wifi_power_save on
+    wake_on_wifi
+  fi
+  (( next_sync )) || next_sync=$(( $(date +%s) + sync_min * 60 ))
+  if (( sync_min > 0 )); then
+    echo 0 >"$rtc" 2>/dev/null; echo "$next_sync" >"$rtc" 2>/dev/null
+  fi
+  woke=''
   sleep_once || { sleep 5; continue; }
-  # The power key, if that's what woke us, reaches vegas-power-key now.
-  sleep "$grace"
+  if [[ $woke == *wlan* ]]; then
+    traffic_grace
+  else
+    # The power key, if that's what woke us, reaches vegas-power-key now.
+    sleep "$grace"
+  fi
+  if (( sync_min > 0 && $(date +%s) >= next_sync - 2 )); then
+    sync_window
+    next_sync=$(( $(date +%s) + sync_min * 60 ))
+  fi
 done
