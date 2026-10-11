@@ -162,8 +162,22 @@ fi
 # Wi-Fi in the background so it never delays the desktop.
 "$helper/wifi-up" >>/var/log/vegas/wifi.log 2>&1 &
 
-runuser -u omarchy -- env HOME=/home/omarchy USER=omarchy LOGNAME=omarchy \
-  /usr/local/bin/vegas-desktop >>/var/log/vegas/desktop.log 2>&1 &
+# Android-style foreground group: the desktop session and every app it starts
+# run in top-app with cpu.uclamp.latency_sensitive, which makes EAS place their
+# wakeups on idle CPUs (CPU-raster scrolling: 13% -> 5% late frames). The touch
+# boost in vegas-gpu-boost adds CPU frequency floors while touching.
+top=/sys/fs/cgroup/top-app
+mountpoint -q /sys/fs/cgroup || mount -t cgroup2 -o nsdelegate none /sys/fs/cgroup
+if echo '+cpu +cpuset' >/sys/fs/cgroup/cgroup.subtree_control && mkdir -p "$top"; then
+  echo 1 >"$top/cpu.uclamp.latency_sensitive"
+else
+  top=
+fi
+(
+  [[ -n $top ]] && echo "$BASHPID" >"$top/cgroup.procs"
+  exec runuser -u omarchy -- env HOME=/home/omarchy USER=omarchy LOGNAME=omarchy \
+    /usr/local/bin/vegas-desktop >>/var/log/vegas/desktop.log 2>&1
+) &
 
 # Android's boot_control HAL normally does this. Once the desktop has stayed
 # up for a minute, mark this slot's boot successful so the bootloader stops

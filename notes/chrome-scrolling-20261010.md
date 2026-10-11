@@ -92,6 +92,30 @@ with the clock settling where the GPU is ~30% busy. The user confirmed the block
 without touching. native-init now sets margin 70 on GPU boots. Touch boost stays, because GED
 climbs only one OPP per 100 ms.
 
+## CPU side: Android-style top-app group and CPU touch boost
+
+GPU rasterization on ARM libmali shows a rendering glitch under X's blurred sticky header
+(backdrop-filter). It is still there with `--gpu-rasterization-msaa-sample-count=0`. CPU raster
+has no glitch but felt laggy, so the CPU side needed what Android does.
+
+native-init mounted no cgroups at all. With cgroup v2 (`+cpu +cpuset`), a `top-app` group holding
+the desktop session, and the synthetic feed with CPU raster at 120 Hz (5 swipes per config, 2
+interleaved rounds):
+
+| Config | fps | late |
+|---|---:|---:|
+| baseline | 104 | 13–14% |
+| `cpu.uclamp.latency_sensitive = 1` | 113–116 | 4.5–7% |
+| + `cpu.uclamp.min = 40` | 106–110 | 9–13% (worse: crowds the 2 A76s) |
+| CPU floors at max only | 116 | 4–4.6% |
+| **latency_sensitive + floors at max** | **116–119** | **2–4.5%** |
+| latency_sensitive + little floor 1.6 GHz | 115–116 | 4.5–5.6% |
+
+Now: native-init starts the desktop in `top-app` with `latency_sensitive = 1`, and
+`vegas-gpu-boost` raises both CPU policies' `scaling_min_freq` to the maximum together with the GPU
+OPP pin while touching (released 1.5 s after the last touch, same 37 °C guard). Chrome's critical
+threads spent ~70% of their time on the A55s before this (sampled `psr`).
+
 ## Without autoplay video, and what didn't help
 
 With X's video URLs blocked in the bench (like setting X's autoplay to "Never"), X at 120 Hz runs

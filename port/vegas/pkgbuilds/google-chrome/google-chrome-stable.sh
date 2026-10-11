@@ -22,8 +22,9 @@ if [[ ! -f $config/vegas/chrome-software && -c /dev/mali0 && -f /run/vegas-gpu-r
     export LD_LIBRARY_PATH=$libmali/lib
     unset LIBGL_DRIVERS_PATH
     # With touch boost, page drawing on the GPU beats the CPU on X at 120 Hz
-    # (28% vs 37% late frames).
+    # (28% vs 37% late frames). ~/.config/vegas/chrome-cpu-raster opts out.
     raster=(--enable-gpu-rasterization)
+    [[ -f $config/vegas/chrome-cpu-raster ]] && raster=(--disable-gpu-rasterization)
   else
     export LD_LIBRARY_PATH=/opt/vegas-gpu/mesa-kbase/lib
     export LIBGL_DRIVERS_PATH=/opt/vegas-gpu/mesa-kbase/lib/dri
