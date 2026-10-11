@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Touch boost for the Mali, like Android's: full GPU clock while a finger is
+on the screen and for a moment after (fling), then hand back to GED.
+
+GED's loading DVFS (fixed by native-init with dvfs_loading_mode=0) climbs only
+1-3 OPPs per 100 ms from 390 MHz, too slow for a swipe. A pinned OPP bypasses
+MediaTek's thermal limits, so no boost above BOOST_MAX_DECI_C battery temperature
+(native-init's guard sends the phone to fastboot at 40.0 C).
+"""
+import fcntl
+import glob
+import os
+import select
+import time
+
+FIX = '/proc/gpufreqv2/fix_target_opp_index'
+BATTERY_TEMP = '/sys/class/power_supply/battery/temp'
+BOOST_OPP = '0'            # 1072 MHz
+RELEASE_AFTER_S = 1.5      # covers the fling after the finger lifts
+BOOST_MAX_DECI_C = 370
+EVENT_SIZE = 24            # struct input_event on aarch64
+
+
+def touchscreen():
+    for path in sorted(glob.glob('/dev/input/event*')):
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        name = fcntl.ioctl(fd, (2 << 30) | (128 << 16) | (ord('E') << 8) | 0x06, bytes(128))
+        if name.split(b'\0')[0] == b'ILITEK_TDDI':
+            return fd
+        os.close(fd)
+    raise SystemExit('ILITEK_TDDI touchscreen not found')
+
+
+def write(path, value):
+    with open(path, 'w') as f:
+        f.write(value)
+
+
+def cool_enough():
+    try:
+        with open(BATTERY_TEMP) as f:
+            return int(f.read()) < BOOST_MAX_DECI_C
+    except (OSError, ValueError):
+        return False
+
+
+def main():
+    fd = touchscreen()
+    boosted = False
+    last = 0.0
+    write(FIX, '-1')
+    while True:
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        now = time.monotonic()
+        if ready:
+            try:
+                while os.read(fd, EVENT_SIZE * 64):
+                    pass
+            except BlockingIOError:
+                pass
+            last = now
+            if not boosted and cool_enough():
+                write(FIX, BOOST_OPP)
+                boosted = True
+        if boosted and (now - last > RELEASE_AFTER_S or not cool_enough()):
+            write(FIX, '-1')
+            boosted = False
+
+
+if __name__ == '__main__':
+    main()

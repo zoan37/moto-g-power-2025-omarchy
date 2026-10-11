@@ -21,13 +21,17 @@ if [[ ! -f $config/vegas/chrome-software && -c /dev/mali0 && -f /run/vegas-gpu-r
     export VEGAS_LIBMALI_JM_COMPAT=stride72 LD_PRELOAD=$libmali/libmali-jm-compat.so
     export LD_LIBRARY_PATH=$libmali/lib
     unset LIBGL_DRIVERS_PATH
+    # With touch boost, page drawing on the GPU beats the CPU on X at 120 Hz
+    # (28% vs 37% late frames).
+    raster=(--enable-gpu-rasterization)
   else
     export LD_LIBRARY_PATH=/opt/vegas-gpu/mesa-kbase/lib
     export LIBGL_DRIVERS_PATH=/opt/vegas-gpu/mesa-kbase/lib/dri
+    raster=(--disable-gpu-rasterization)
   fi
-  # GPU raster measured no better for scrolling and worse for 2D canvas.
+  # 2D canvas stays on the CPU: it benchmarked slower on both GPU drivers.
   gpu=(--use-gl=angle --use-angle=gles --ignore-gpu-blocklist
-       --disable-accelerated-2d-canvas --disable-gpu-rasterization)
+       --disable-accelerated-2d-canvas "${raster[@]}")
 else
   unset LD_LIBRARY_PATH LIBGL_DRIVERS_PATH
 fi

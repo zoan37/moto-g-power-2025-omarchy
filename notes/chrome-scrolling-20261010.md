@@ -56,6 +56,31 @@ between one and two refreshes. That is the judder. At 60 Hz nearly every frame i
 user found it "super smooth". **60 Hz is the direct-DRM default now** (`vegas-refresh 60|90|120`);
 `vegas-desktop-drm` used to hard-code 120 Hz and ignore the setting.
 
+## Toward a steady 120 Hz: the Mali clock
+
+The Mali sat at its lowest OPP (42, 390 MHz of 1072) even at 73% load. Cause, in MediaTek's GED
+driver (kernel-mtk `drivers/gpu/mediatek/ged`): loading mode 5 averages `util_iter`/`util_mcu`,
+which only CSF Malis fill in. The shipped JM kbase never writes them, so the policy sees 0% and
+steps down every 100 ms. Android hides this with frame-based DVFS fed by SurfaceFlinger.
+
+- `dvfs_loading_mode = 0` (active time) makes GED follow load again (native-init on GPU boots).
+- GED still climbs only 1–3 OPPs per 100 ms, so `vegas-gpu-boost` pins OPP 0 via
+  `/proc/gpufreqv2/fix_target_opp_index` from the first touch event until 1.5 s after the last
+  (`-1` releases), like Android's touch boost. A pin bypasses MediaTek's thermal limits, so the
+  boost backs off above a 37.0 °C battery temperature (the only thermal sensor that reads without
+  Android's thermal HAL; the native-init guard sends the phone to fastboot at 40 °C).
+
+X at 120 Hz (alt account, 5–8 swipes): 70 fps / 52% late → GPU pinned 87 / 28% → pinned + GPU
+raster 87 / 28% (vs CPU raster 81 / 37%) → full setup (GED fix + touch boost + libmali + GPU
+raster) 92 fps / 22% late. Pinning Chrome's GPU process to the two A76 cores made it worse (83 / 31%).
+CPU `performance` governor: no gain. Remaining late frames come mostly from Chrome's draw step
+(`StartDrawToSwapStart` ≈ 9 ms on late frames vs 6.4 ms on on-time frames) and from raster spikes
+when new posts arrive.
+
+**Autoplaying video wrecks it:** X sections with autoplaying video dropped to 24 fps (renderer at
+91% CPU). There is no hardware video decode on this kernel, so Chrome decodes in software. Turning
+off autoplay in X's settings avoids this.
+
 ## Where the time went
 
 With Mesa kbase compositing, the page itself was cheap (`ProxyMain::BeginMainFrame` ≈ 5 ms). The
