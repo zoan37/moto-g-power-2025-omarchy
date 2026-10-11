@@ -147,3 +147,21 @@ unpack_bootimg --boot_img boot.tier1.img && avbtool info_image --image boot.tier
 Hardware session, with the user's OK: flash `boot_b` with tier 1 and keep `boot.stock.img` for recovery. Check that
 `uname -v` shows `#2`, `/dev` is devtmpfs, and every vendor module loads (`dmesg` free of CRC or "disagrees about
 version" errors). Then try systemd as PID 1.
+
+## On the phone (2026-10-11, night): tier 1 runs
+
+- **Tier 1 boots and everything works.** `uname -v` shows `#2`, `/proc/filesystems` has devtmpfs and autofs,
+  all 224 modules load (no CRC/symbol errors), and `vegas-doctor` reports 0 FAIL, 0 WARN (GPU, video decode, Wi-Fi,
+  fuel gauge, boost daemon). boot_b now holds `boot.tier1-raw.img`: `mkbootimg --header_version 4 --kernel
+  Image.tier1.gz --cmdline ''`, **no AVB footer needed** (the unlocked LK boots it).
+- **Safety net for kernel tests:** `fastboot oem fb_mode_set` makes every boot stop in fastboot ("UTAG bootmode
+  configured as fastboot"); `fastboot continue` boots once, and a failed boot returns to fastboot. `fastboot oem
+  fb_mode_clear` restores normal boots. **Clear it after testing.**
+- **fastboot gotchas:** after `continue`, LK keeps its fastboot USB id (22b8:2e80) for ~14 s before handing off. A second
+  `continue` in that window aborts the boot and leaves the phone in fastboot. The first command right after arriving
+  in fastboot sometimes fails (`FAILED (remote: '')`, or a USB drop mid-write); retrying works.
+- fastboot accepts our custom images for both boot_b and init_boot_b (and Motorola's signed ones). Recovery never
+  needs Android; never flash the stock init_boot: Android would try to mount `userdata`, which holds the Omarchy root.
+- Writing boot_b from Linux with `dd` also works.
+- Repacking with avbtool's footer isn't needed. The stock image's compressed kernel is ~15 KB smaller than gzip -9
+  manages (Google's build uses a different deflate encoder), so a stock-layout splice doesn't fit.
