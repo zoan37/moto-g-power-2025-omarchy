@@ -65,6 +65,11 @@ fi
 echo "Desktop"
 pgrep -x Hyprland >/dev/null && ok "Hyprland running" || fail "Hyprland not running"
 pgrep -f 'quickshell -n' >/dev/null && ok "Omarchy shell running" || fail "Omarchy shell not running"
+hp=$(pgrep -x Hyprland | head -1)
+if [[ -f /run/vegas-gpu-ready ]]; then
+  tr '\0' '\n' <"/proc/$hp/environ" 2>/dev/null | grep -q '^AQ_KMS_CPU_FENCE_WAIT=1$' &&
+    ok "KMS commits wait for render fences" || warn "Hyprland started without AQ_KMS_CPU_FENCE_WAIT (torn frames possible)"
+fi
 errs=$(hc configerrors | grep -v -E '^\s*$' | wc -l)
 (( errs == 0 )) && ok "no Hyprland config errors" || fail "Hyprland config errors: $errs"
 [[ $(hc getoption debug:vfr | head -1) == *true* ]] && ok "vfr on" || warn "vfr off"
@@ -92,6 +97,7 @@ if [[ $temp =~ ^[0-9]+$ ]]; then
 fi
 cap=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null)
 [[ $cap =~ ^[0-9]+$ && $cap -ge 0 ]] && ok "battery ${cap}%" || warn "battery capacity unreadable"
+pgrep -f /usr/lib/upowerd >/dev/null && ok "UPower running" || warn "UPower not running (no battery indicator)"
 ip -4 -br addr show wlan0 2>/dev/null | grep -q UP && ok "Wi-Fi up" || warn "Wi-Fi down"
 
 echo

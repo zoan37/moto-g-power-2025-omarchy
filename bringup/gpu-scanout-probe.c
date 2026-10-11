@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <gbm.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
@@ -34,12 +35,21 @@ int main(int argc, char **argv)
 
    PFNEGLGETPLATFORMDISPLAYEXTPROC get_display =
       (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
-   EGLDisplay d = get_display(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
+   // PROBE_EGL_PLATFORM=gbm: the GBM platform (Hyprland's default, and what
+   // ARM libmali supports); otherwise Mesa's surfaceless platform.
+   const char *platform = getenv("PROBE_EGL_PLATFORM");
+   EGLDisplay d = platform && !strcmp(platform, "gbm")
+      ? get_display(EGL_PLATFORM_GBM_KHR, gbm, NULL)
+      : get_display(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
    EGLint maj, min;
    const EGLint ver[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
-   if (!eglInitialize(d, &maj, &min) || !eglBindAPI(EGL_OPENGL_ES_API)) return 1;
+   if (!eglInitialize(d, &maj, &min) || !eglBindAPI(EGL_OPENGL_ES_API)) {
+      fprintf(stderr, "eglInitialize failed %#x\n", eglGetError()); return 1;
+   }
    EGLContext ctx = eglCreateContext(d, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, ver);
-   if (!eglMakeCurrent(d, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx)) return 1;
+   if (!eglMakeCurrent(d, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx)) {
+      fprintf(stderr, "eglMakeCurrent (no config, no surface) failed %#x\n", eglGetError()); return 1;
+   }
    printf("GL_RENDERER=%s stride=%u\n", glGetString(GL_RENDERER), stride);
 
    const EGLint attrs[] = {
