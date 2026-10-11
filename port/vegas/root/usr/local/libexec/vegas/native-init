@@ -46,6 +46,11 @@ mkdir -p /dev/dri
 [[ -e /dev/dri/card0 ]] || mknod /dev/dri/card0 c 226 0
 chgrp video /dev/dri/card0
 chmod 0660 /dev/dri/card0
+# ARM's libmali (opt-in Chrome GPU driver) allocates from the system DMA heap.
+if [[ -c /dev/dma_heap/system ]]; then
+  chgrp video /dev/dma_heap/system
+  chmod 0660 /dev/dma_heap/system
+fi
 
 /usr/lib/systemd/systemd-udevd --daemon >>/var/log/vegas/udev.log 2>&1
 udevadm trigger --action=add
