@@ -1,0 +1,2 @@
+option('driverdir', type: 'string', value: '',
+       description: 'Directory for the VA driver (default: libva driverdir)')

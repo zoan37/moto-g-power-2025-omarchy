@@ -9,6 +9,7 @@ to upstream files, or externally obtained binaries.
 | Omarchy ARM desktop/configuration | [BlackFireAlex/omarchy-android](https://github.com/BlackFireAlex/omarchy-android), MIT; notice in `LICENSES/omarchy-android-MIT.txt` |
 | Aquamarine patch | [hyprwm/aquamarine](https://github.com/hyprwm/aquamarine), BSD 3-Clause; notice in `LICENSES/aquamarine-BSD-3-Clause.txt` |
 | Mesa/Kbase patches | [RandomCoderOrg/mesa-gfxstream, tensor-g1](https://github.com/RandomCoderOrg/mesa-gfxstream/tree/tensor-g1); upstream per-file licenses apply; core Mesa uses MIT |
+| VA-API driver `port/vegas/va-stateful/` | Derived from [sofus13/libva-v4l2_request](https://github.com/sofus13/libva-v4l2_request) 1.3 (Ondrej Jirman) and the MM21 patch of lenovo-slim3-chromebook-omarchy; GPL v3 or later, text in `port/vegas/va-stateful/COPYING` |
 | Phone keyboard | [jjsullivan5196/wvkbd](https://github.com/jjsullivan5196/wvkbd), GPL v3 with MIT-licensed components identified in its COPYING files |
 | Pointer protocol | `vendor/protocols/wlr-virtual-pointer-unstable-v1.xml`; upstream copyright and MIT notice are embedded in the XML |
 | Wi-Fi loader dependency | [Muzuwi/wmt-pyloader](https://github.com/Muzuwi/wmt-pyloader), GPL v3; fetched separately, not vendored here |

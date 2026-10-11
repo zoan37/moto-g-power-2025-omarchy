@@ -1,0 +1,50 @@
+#!/bin/bash
+# Hardware video decode: load MediaTek's decoder chain (vendor_dlkm modules kept
+# in /opt/vegas-video/modules) and create its device node, for the mtk_stateful
+# VA-API driver that Google Chrome uses. Called in the background by native-init.
+# Never unload these modules: removing mtk-vcodec-dec-v1 reboots the phone.
+# Opt out with /var/lib/vegas/no-video-decode. A boot that doesn't stay up for a
+# minute after loading counts as a strike; one strike disables it until the file
+# /var/lib/vegas/video-disabled-unstable is removed.
+set -u
+modules=/opt/vegas-video/modules
+state=/var/lib/vegas
+pending=$state/video-boot-pending
+mkdir -p "$state"
+[[ -e $state/no-video-decode ]] && { echo 'video decode disabled by no-video-decode'; exit 0; }
+[[ -e $state/video-disabled-unstable ]] && { echo 'video decode disabled after an unconfirmed boot'; exit 0; }
+if [[ -e $pending ]]; then
+  mv -f "$pending" "$state/video-disabled-unstable"
+  echo 'previous boot with video modules did not stay up; disabled'
+  exit 0
+fi
+[[ -d $modules ]] || exit 0
+
+: >"$pending"; sync
+for m in vcp mtk-vcodec-common mtk-vcodec-dec-v1 vdec-fmt; do
+  [[ -d /sys/module/${m//-/_} ]] && continue
+  if ! timeout -k 2 20 insmod "$modules/$m.ko"; then
+    echo "insmod $m failed"; rm -f "$pending"; exit 1
+  fi
+done
+
+# No devtmpfs on the stock kernel: create the node from sysfs.
+for d in /sys/class/video4linux/video*; do
+  [[ $(cat "$d/name" 2>/dev/null) == mtk-vcodec-dec ]] || continue
+  IFS=: read -r major minor <"$d/dev"
+  node=/dev/$(basename "$d")
+  [[ -e $node ]] || mknod "$node" c "$major" "$minor"
+  chgrp video "$node"; chmod 0660 "$node"
+done
+# The decoder's buffers come from MediaTek's multimedia heap (fastest), with
+# the system heap as fallback; Chrome's GPU process runs as the user.
+for h in mtk_mm system; do
+  [[ -c /dev/dma_heap/$h ]] && chgrp video "/dev/dma_heap/$h" && chmod 0660 "/dev/dma_heap/$h"
+done
+# libva opens a DRM device; mediatek-drm has no render node. Chrome uses card0,
+# vainfo/ffmpeg look for renderD128.
+[[ -e /dev/dri/renderD128 ]] || { mknod /dev/dri/renderD128 c 226 0; chgrp video /dev/dri/renderD128; chmod 0660 /dev/dri/renderD128; }
+echo "video decode ready: $(ls /dev/video* 2>/dev/null | tr '\n' ' ')"
+
+sleep 60
+rm -f "$pending"; sync

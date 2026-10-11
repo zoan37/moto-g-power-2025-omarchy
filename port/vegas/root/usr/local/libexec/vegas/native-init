@@ -149,6 +149,10 @@ if [[ -f /run/vegas-gpu-ready ]]; then
   /usr/local/sbin/vegas-gpu-boost >>/var/log/vegas/gpu-boost.log 2>&1 &
 fi
 
+# Hardware video decode (MediaTek decoder + mtk_stateful VA-API for Chrome),
+# in the background so a slow or failing module load never delays the desktop.
+"$helper/video-prepare" >>/var/log/vegas/video.log 2>&1 &
+
 # Wi-Fi in the background so it never delays the desktop.
 "$helper/wifi-up" >>/var/log/vegas/wifi.log 2>&1 &
 

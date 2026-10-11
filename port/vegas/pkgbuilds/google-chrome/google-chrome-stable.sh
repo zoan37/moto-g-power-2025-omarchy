@@ -37,5 +37,28 @@ else
 fi
 flags=()
 [[ -f $config/chrome-flags.conf ]] && mapfile -t flags < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$config/chrome-flags.conf")
+
+# Hardware video decode (H.264, VP9) through the mtk_stateful VA-API driver on
+# MediaTek's decoder, which video-prepare loads at boot
+# (notes/video-decode-chrome-va-20261011.md). ~/.config/vegas/no-video-decode
+# turns it off. Chrome keeps only the last --enable-features/--disable-features,
+# so the user's lists from chrome-flags.conf are merged in.
+enable=() disable=() rest=()
+for f in "${flags[@]}"; do
+  case $f in
+    --enable-features=*) enable+=("${f#*=}") ;;
+    --disable-features=*) disable+=("${f#*=}") ;;
+    *) rest+=("$f") ;;
+  esac
+done
+if [[ ! -f $config/vegas/no-video-decode && -f /opt/vegas-video/va/mtk_stateful_drv_video.so ]] &&
+   compgen -G '/dev/video[0-9]*' >/dev/null; then
+  export LIBVA_DRIVERS_PATH=/opt/vegas-video/va LIBVA_DRIVER_NAME=mtk_stateful
+  enable+=(VaapiVideoDecoder,VaapiIgnoreDriverChecks,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL)
+  disable+=(UseChromeOSDirectVideoDecoder)
+fi
+features=()
+(( ${#enable[@]} )) && features+=("--enable-features=$(IFS=,; echo "${enable[*]}")")
+(( ${#disable[@]} )) && features+=("--disable-features=$(IFS=,; echo "${disable[*]}")")
 exec /opt/google/chrome/google-chrome --ozone-platform=wayland --enable-wayland-ime \
-  --password-store=basic "${gpu[@]}" "${flags[@]}" "$@"
+  --password-store=basic "${gpu[@]}" "${rest[@]}" "${features[@]}" "$@"

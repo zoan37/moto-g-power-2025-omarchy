@@ -31,8 +31,8 @@ mkdir -p /var/log/vegas/power
     done
   done
 } >/var/log/vegas/power/last-request.log
-# A deliberate reboot/poweroff is not a GPU boot-loop strike.
-rm -f /var/lib/vegas/gpu-boot-pending
+# A deliberate reboot/poweroff is not a GPU or video-decode boot-loop strike.
+rm -f /var/lib/vegas/gpu-boot-pending /var/lib/vegas/video-boot-pending
 # Avoid compositor/device teardown before the stock reboot notifier runs.
 # The direct sync + RESTART2 path is verified from the active desktop.
 sync
