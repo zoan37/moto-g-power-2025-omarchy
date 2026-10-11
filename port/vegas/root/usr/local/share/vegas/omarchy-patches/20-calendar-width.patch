@@ -1,0 +1,49 @@
+# Phone: the calendar (7 x 52 pt cells, 52 px hero date) fits the 360 pt screen.
+diff -ru a/shell/plugins/panels/clock/Panel.qml b/shell/plugins/panels/clock/Panel.qml
+--- a/shell/plugins/panels/clock/Panel.qml	2026-10-11 13:25:37.830023998 -0400
++++ b/shell/plugins/panels/clock/Panel.qml	2026-10-11 13:26:20.586154996 -0400
+@@ -78,11 +78,16 @@
+   readonly property color contentForeground: bar ? bar.foreground : Color.foreground
+   readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
+ 
+-  readonly property int cellWidth: Style.space(52)
++  // Phone (vegas): seven day cells + week column + gutter must fit the 360 pt
++  // screen (52 pt cells made the grid 410 pt and cut off Saturday/Sunday).
++  readonly property int cellWidth: Math.min(Style.space(52),
++    Math.floor((Screen.width - Style.space(32) - Style.space(14) - Style.space(48)) / 7))
+   readonly property int cellHeight: Style.space(34)
+   readonly property int cellSpacing: Style.space(2)
+   readonly property int weekColumnWidth: Style.space(32)
+   readonly property int gutterWidth: Style.space(14)
++  // Phone (vegas): the hero date ("September 30" at 52 px) shrinks to fit too.
++  readonly property real heroScale: Math.min(1, (Screen.width - 60) / 440)
+ 
+   function open() {
+     refresh()
+@@ -291,7 +296,7 @@
+             Row {
+               id: heroRow
+               anchors.horizontalCenter: parent.horizontalCenter
+-              spacing: Style.space(22)
++              spacing: Math.round(Style.space(22) * root.heroScale)
+ 
+               Text {
+                 // Baseline-aligned, not center-aligned: "July 26" carries a
+@@ -306,7 +311,7 @@
+                 // Decorative, and deliberately outside the Style.font.*
+                 // scale. Sized so the glyph reads at the cap height of the
+                 // date beside it rather than towering over it.
+-                font.pixelSize: 48
++                font.pixelSize: Math.round(48 * root.heroScale)
+               }
+ 
+               Text {
+@@ -318,7 +323,7 @@
+                   ? Style.hoverStateColor(root.contentForeground, Color.accent)
+                   : root.contentForeground
+                 font.family: root.contentFontFamily
+-                font.pixelSize: 52
++                font.pixelSize: Math.round(52 * root.heroScale)
+                 font.bold: true
+               }
+             }
