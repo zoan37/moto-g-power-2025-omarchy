@@ -38,6 +38,14 @@ behaviour across suspend.
   Features (page 2) reply.
 - `bnep` (BT networking) isn't in the kernel: bluetoothd logs it, and PAN tethering won't work.
 
+## Audio (PipeWire)
+
+PipeWire's BlueZ plugin ships in `pipewire-audio`. WirePlumber's BlueZ monitor normally runs only while the user's
+logind session is active on a seat; the phone's desktop is seatless (lingering user manager), so
+`~/.config/wireplumber/wireplumber.conf.d/50-vegas-bluez.conf` disables `monitor.bluez.seat-monitoring`. After that
+the adapter advertises Audio Source/Sink (A2DP), A/V Remote Control and Handsfree/AG. New outputs start at 25%
+(`50-vegas-volume.conf`).
+
 ## Boot
 
 `vegas-bluetooth.service` → `/usr/local/libexec/vegas/bluetooth-up`: waits for Wi-Fi's WMT stack (wmt_drv +
