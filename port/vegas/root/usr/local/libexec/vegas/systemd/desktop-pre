@@ -37,3 +37,5 @@ for ((attempt=0; attempt<50; attempt++)); do
   sleep 0.1
 done
 exit 0
+# Phone fixes to Omarchy's own shell files (idempotent).
+/usr/local/libexec/vegas/omarchy-patches

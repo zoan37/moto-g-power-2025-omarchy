@@ -1,0 +1,27 @@
+# Phone: notification toasts fit the 360 pt screen (Omarchy sizes them 380 pt, anchored top-right).
+diff -ru a/shell/plugins/notifications/components/NotificationCard.qml b/shell/plugins/notifications/components/NotificationCard.qml
+--- a/shell/plugins/notifications/components/NotificationCard.qml	2026-10-11 13:24:00.862471890 -0400
++++ b/shell/plugins/notifications/components/NotificationCard.qml	2026-10-11 13:24:00.883373481 -0400
+@@ -63,7 +63,8 @@
+     return Quickshell.iconPath(value, true)
+   }
+ 
+-  implicitWidth: Style.space(380)
++  // Phone (vegas): never wider than the screen (360 pt at 3x) minus margins.
++  implicitWidth: Math.min(Style.space(380), Screen.width - 2 * Style.space(8))
+   // Add vertical border insets so mainColumn (inset by border on top/left/right)
+   // doesn't push content under the bottom edge.
+   implicitHeight: mainColumn.implicitHeight + borderTop + borderBottom
+diff -ru a/shell/plugins/notifications/Service.qml b/shell/plugins/notifications/Service.qml
+--- a/shell/plugins/notifications/Service.qml	2026-10-11 13:24:00.858924199 -0400
++++ b/shell/plugins/notifications/Service.qml	2026-10-11 13:24:00.884734236 -0400
+@@ -982,7 +982,8 @@
+         anchors.right: parent.right
+         anchors.top: parent.top
+         anchors.topMargin: popupWindow.popupPlacement.margins.top
+-        anchors.rightMargin: popupWindow.popupPlacement.margins.right
++        // Phone (vegas): keep the card off the screen's right edge.
++        anchors.rightMargin: Math.max(popupWindow.popupPlacement.margins.right, Style.space(8))
+         spacing: Style.space(8)
+ 
+         Repeater {

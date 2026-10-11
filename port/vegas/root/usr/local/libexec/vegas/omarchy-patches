@@ -1,0 +1,19 @@
+#!/bin/bash
+# Phone fixes to Omarchy's own files under $OMARCHY_PATH (the pinned
+# omarchy-android bundle, not owned by any package), kept as patches in
+# /usr/local/share/vegas/omarchy-patches and applied before the desktop starts
+# (desktop-pre, native-init). Idempotent: an applied patch is skipped; one that
+# no longer applies (Omarchy updated underneath) is reported and left out.
+set -u
+root=${OMARCHY_PATH:-/usr/share/omarchy}
+for p in /usr/local/share/vegas/omarchy-patches/*.patch; do
+  [[ -e $p ]] || continue
+  name=$(basename "$p")
+  if patch -d "$root" -p1 -R -s -f --dry-run <"$p" >/dev/null 2>&1; then
+    continue                                   # already applied
+  elif patch -d "$root" -p1 -N -s -f --dry-run <"$p" >/dev/null 2>&1; then
+    patch -d "$root" -p1 -N -s -f --no-backup-if-mismatch <"$p" && echo "omarchy patch applied: $name"
+  else
+    echo "omarchy patch does not apply (Omarchy changed?): $name"
+  fi
+done

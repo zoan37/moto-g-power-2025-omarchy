@@ -161,6 +161,9 @@ fi
 # in the background so a slow or failing module load never delays the desktop.
 "$helper/video-prepare" >>/var/log/vegas/video.log 2>&1 &
 
+# Phone fixes to Omarchy's own shell files (idempotent), before the desktop.
+"$helper/omarchy-patches" >>/var/log/vegas/init.log 2>&1
+
 # Sound card (vendor audio modules + speaker calibration), in the background.
 "$helper/audio-prepare" >>/var/log/vegas/audio.log 2>&1 &
 
