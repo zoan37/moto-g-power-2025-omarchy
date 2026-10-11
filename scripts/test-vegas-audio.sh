@@ -6,7 +6,8 @@
 # it from a root shell on the phone).
 #
 # Plays sound. Run it only with someone at the phone who agreed to it. Everything is at LOW
-# level by default: test tone -24 dBFS, smart amps attenuated 25 dB, headphone amp -10 dB.
+# level by default: soft 440 Hz tone -40 dBFS, smart amps attenuated 40 dB (about -80 dB in total, 20 dB
+# below the 2026-10-11 test that was still loud enough to wake someone), headphone amp -10 dB.
 #
 # Needs (staged beforehand, see notes/audio-20261011.md):
 #   $MODDIR/*.ko         stock vendor_dlkm audio modules (list below)
@@ -16,21 +17,21 @@
 # Steps (STEPS, space separated; default "modules controls speaker mic ucm"):
 #   modules     insmod the audio chain, create /dev/snd nodes, wait for the card
 #   controls    save amixer controls/contents and /proc/asound/pcm to $LOG
-#   speaker     both AW88394 amps (Music profile): 1 kHz tone while recording the main mic
+#   speaker     both AW88394 amps (Music profile): soft 440 Hz tone while recording the main mic
 #   earpiece    aw_dev_0 alone in Receiver profile (another 10 dB lower)
 #   headphones  MT6377 HP amp, only if the jack reports headphones
 #   mic         3 s from the main mic (AIN0), RMS/peak per channel
 #   headsetmic  3 s from the headset mic (AIN1), only if the jack reports a mic
 #   ucm         alsaucm parse + BootSequence + Speaker device via the UCM PCM, low tone
 #   acp         spa-acp-tool probe of the card (what PipeWire will accept)
-# Env: TONE_DB (dBFS, default -24), AW_ATTEN (aw rx_volume, 1/8 dB steps, default 200 = -25 dB),
+# Env: TONE_DB (dBFS, default -40), AW_ATTEN (aw rx_volume, 1/8 dB steps, default 320 = -40 dB),
 #      HP_RAW (MT6377 'Headset Volume' raw, 18 = -10 dB quietest; 8 = 0 dB; 0 = +8 dB),
 #      MODDIR (default /opt/vegas-audio/modules), LOG (default /var/log/vegas/audio-test-<time>.txt)
 set -uo pipefail
 
 STEPS=${STEPS:-modules controls speaker mic ucm}
-TONE_DB=${TONE_DB:--24}
-AW_ATTEN=${AW_ATTEN:-200}
+TONE_DB=${TONE_DB:--40}
+AW_ATTEN=${AW_ATTEN:-320}
 HP_RAW=${HP_RAW:-18}
 MODDIR=${MODDIR:-/opt/vegas-audio/modules}
 LOG=${LOG:-/var/log/vegas/audio-test-$(date +%Y%m%dT%H%M%S).txt}
@@ -93,24 +94,24 @@ print(' '.join(out) or 'empty')
 EOF
 }
 
-tone() { # tone FILE SECONDS DBFS  -> 48 kHz stereo S16 1 kHz sine, 20 ms fades
+tone() { # tone FILE SECONDS DBFS  -> 48 kHz stereo S16 440 Hz sine, 150 ms fades
 	python3 -I - "$@" <<'EOF'
 import math, struct, sys, wave
 path, secs, db = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
 rate, n = 48000, int(48000 * float(sys.argv[2]))
 amp = 32767 * 10 ** (db / 20)
-fade = int(rate * 0.02)
+fade = int(rate * 0.15)
 frames = bytearray()
 for i in range(n):
     g = min(1.0, i / fade, (n - 1 - i) / fade) if fade else 1.0
-    v = int(amp * g * math.sin(2 * math.pi * 1000 * i / rate))
+    v = int(amp * g * math.sin(2 * math.pi * 440 * i / rate))
     frames += struct.pack('<hh', v, v)
 with wave.open(path, 'wb') as w:
     w.setnchannels(2); w.setsampwidth(2); w.setframerate(rate); w.writeframes(bytes(frames))
 EOF
 }
 
-analyze() { # analyze FILE [TONE_START_S]  -> per channel RMS/peak dBFS; 1 kHz before/during tone
+analyze() { # analyze FILE [TONE_START_S]  -> per channel RMS/peak dBFS; 440 Hz before/during tone
 	python3 -I - "$@" <<'EOF'
 import array, math, sys, wave
 w = wave.open(sys.argv[1])
@@ -118,7 +119,7 @@ ch, rate = w.getnchannels(), w.getframerate()
 data = array.array('h', w.readframes(w.getnframes()))
 start = float(sys.argv[2]) if len(sys.argv) > 2 else None
 def db(x): return 20 * math.log10(x / 32768) if x > 0 else -999
-def goertzel(s, f=1000.0):
+def goertzel(s, f=440.0):
     k = 2 * math.cos(2 * math.pi * f / rate); a = b = 0.0
     for x in s: a, b = x + k * a - b, a
     p = a * a + b * b - k * a * b
@@ -131,7 +132,7 @@ for c in range(ch):
         i0 = int(rate * start)
         base, during = s[: int(rate * 0.4)], s[i0 + int(rate * 0.2): i0 + int(rate * 1.2)]
         gb, gd = goertzel(base), goertzel(during)
-        line += f', 1 kHz {db(gb):.1f} -> {db(gd):.1f} dBFS ({"TONE HEARD" if gd > 4 * max(gb, 1) else "no tone"})'
+        line += f', 440 Hz {db(gb):.1f} -> {db(gd):.1f} dBFS ({"TONE HEARD" if gd > 4 * max(gb, 1) else "no tone"})'
     print(line)
 EOF
 }
