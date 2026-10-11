@@ -1,0 +1,39 @@
+{
+  // Extend the Quickshell Omarchy menu with JSONC.
+  //
+  // IDs are object keys. The parent is inferred from the dotted id, so
+  // "personal.notes" appears under "personal", and "personal" appears on the
+  // root menu. Reuse an existing id to override/extend it.
+  //
+  // Fields:
+  //   icon        Nerd Font glyph shown in the icon column.
+  //   label       Visible row title.
+  //   action      Shell command to run. If omitted, the row is a submenu.
+  //   target      Existing submenu id to open. Use for links/aliases.
+  //   provider    Name of a shell-defined runtime row source (e.g. "fonts").
+  //   aliases     alternate `omarchy menu summon <name>` routes; also searchable.
+  //   description Optional subtitle and extra search text.
+  //   when        Shell condition; hide row when it fails.
+  //   checked     Shell condition; append ✓ when it succeeds.
+  //
+  // Examples:
+  // "personal": {"icon":"","label":"Personal"},
+  // "personal.notes": {"icon":"󰎞","label":"Notes","action":"omarchy-launch-editor ~/notes"},
+  // "personal.files": {"icon":"","label":"Files","action":"uwsm-app -- nautilus ~/Documents"},
+  //
+  // provider can only reference row sources the shell already defines (the
+  // providers map in Menu.qml). Static submenus only need dotted ids.
+  //
+  // Example: replace the default About action by reusing the same id. Existing
+  // fields are kept unless overridden.
+  // "about": {"icon":"","label":"About","action":"omarchy-launch-or-focus-tui \"zsh -c 'fastfetch; read -k 1'\""},
+
+  // Phone (vegas): hide System entries that can't work here. The shell skips
+  // `when:` guards in this session (OMARCHY_PROOT=1 without unlimited
+  // processes), so they are turned into links to an empty submenu, which the
+  // menu hides. Suspend runs `systemctl suspend` (refused by the polkit rule,
+  // untested on this phone); Hibernate has no swap or resume path. The power
+  // key's short press (vegas-power-key) is the phone's "sleep" for now.
+  "system.suspend": {"action":"","target":"vegas.hidden"},
+  "system.hibernate": {"action":"","target":"vegas.hidden"},
+}

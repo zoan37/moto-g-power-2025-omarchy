@@ -1,0 +1,5 @@
+#!/bin/bash
+# Phone: no hibernation. The ramdisk never looks for a resume image, so a
+# hibernated phone would cold-boot and lose the session (or worse, mount a root
+# whose in-memory state was saved elsewhere). Hides "Hibernate" in the menu.
+exit 1

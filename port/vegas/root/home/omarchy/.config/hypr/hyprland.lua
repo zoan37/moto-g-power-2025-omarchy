@@ -47,3 +47,11 @@ hl.window_rule({ match = { float = false }, workspace = "empty" })
 
 -- Prefer the native supervisor adapters in /usr/local/bin.
 hl.env("PATH", "/opt/omarchy-android/hyprland/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/usr/share/omarchy/bin")
+
+-- Phone power key: vegas-power-key (autostart.lua) turns the screen off/on on a
+-- short press and opens the power menu on a long press, like Android. Omarchy's
+-- binding (system menu on every press) and its "any key or pointer motion wakes
+-- the screen" options would fight it: volume keys or a touch must not switch the
+-- panel on in a pocket.
+hl.unbind("XF86PowerOff")
+hl.config({ misc = { key_press_enables_dpms = false, mouse_move_enables_dpms = false } })

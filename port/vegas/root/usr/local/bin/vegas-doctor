@@ -92,6 +92,8 @@ errs=$(hc configerrors | grep -v -E '^\s*$' | wc -l)
 mode=$(hc monitors | grep -o -m1 '[0-9]*x[0-9]*@[0-9.]*')
 [[ $mode == *@120* ]] && ok "panel $mode" || warn "panel $mode"
 pgrep -x wvkbd-mobintl >/dev/null && ok "keyboard running" || warn "keyboard not running"
+pgrep -f /usr/local/bin/vegas-power-key >/dev/null && ok "power key daemon" || warn "power key daemon not running (power key does nothing)"
+pgrep -f /usr/local/bin/vegas-audio-jack >/dev/null && ok "headphone jack watcher" || warn "headphone jack watcher not running"
 
 echo "Browser"
 if chrome=$(pgrep -x chrome | head -1); [[ -n $chrome ]]; then
