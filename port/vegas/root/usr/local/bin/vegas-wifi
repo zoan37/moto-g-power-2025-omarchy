@@ -29,5 +29,50 @@ case ${1:-status} in
     w save_config >/dev/null; echo 'Forgotten.' ;;
   status)
     w status | grep -E '^(wpa_state|ssid|ip_address|freq)='; ip -4 -br addr show wlan0 ;;
-  *) echo 'Usage: vegas-wifi scan|connect|status|forget [ssid]' >&2; exit 2 ;;
+  # For the quick-settings shade: one network per line, strongest first,
+  # "current<TAB>saved<TAB>dBm<TAB>secured<TAB>ssid" (current/saved/secured = 0|1).
+  list)
+    [[ ${2:-} == --scan ]] && { w scan >/dev/null; sleep 3; }
+    current=$(w status | sed -n 's/^ssid=//p')
+    [[ $(w status | sed -n 's/^wpa_state=//p') == COMPLETED ]] || current=
+    saved=$(w list_networks | awk -F'\t' 'NR>1 {print $2}')
+    w scan_results | awk -F'\t' 'NR>1 && $5!="" {print $3"\t"$4"\t"$5}' | sort -t$'\t' -k1,1rn |
+      awk -F'\t' '!seen[$3]++' | while IFS=$'\t' read -r dbm flags ssid; do
+        secured=0; [[ $flags == *WPA* || $flags == *WEP* || $flags == *SAE* ]] && secured=1
+        is_saved=0; grep -qxF -- "$ssid" <<<"$saved" && is_saved=1
+        is_current=0; [[ $ssid == "$current" ]] && is_current=1
+        printf '%s\t%s\t%s\t%s\t%s\n' "$is_current" "$is_saved" "$dbm" "$secured" "$ssid"
+      done ;;
+  # join SSID: password on stdin (first line; empty = open network, or reuse the saved one).
+  join)
+    ssid=${2:?ssid}
+    IFS= read -r pass || pass=
+    id=$(w list_networks | awk -F'\t' -v s="$ssid" 'NR>1 && $2==s {print $1; exit}')
+    if [[ -n $id && -z $pass ]]; then
+      w enable_network "$id" >/dev/null; w select_network "$id" >/dev/null
+    else
+      [[ -n $id ]] && w remove_network "$id" >/dev/null
+      id=$(w add_network | tail -1)
+      w set_network "$id" ssid "\"$ssid\"" >/dev/null
+      if [[ -n $pass ]]; then
+        psk=$(wpa_passphrase "$ssid" "$pass" | sed -n 's/^\tpsk=//p')
+        [[ -n $psk ]] || { echo 'bad password (8-63 characters)'; w remove_network "$id" >/dev/null; exit 1; }
+        w set_network "$id" psk "$psk" >/dev/null
+      else
+        w set_network "$id" key_mgmt NONE >/dev/null
+      fi
+      unset pass psk
+      w enable_network "$id" >/dev/null; w select_network "$id" >/dev/null
+    fi
+    for i in {1..20}; do
+      sleep 1
+      [[ $(w status | sed -n 's/^wpa_state=//p') == COMPLETED ]] && { w save_config >/dev/null; echo connected; exit 0; }
+    done
+    # A wrong password leaves a network that never connects; don't keep it.
+    w list_networks | awk -F'\t' -v s="$ssid" 'NR>1 && $2==s && $4 !~ /CURRENT/ {print $1}' |
+      while read -r n; do w disable_network "$n" >/dev/null; done
+    echo 'not connected (wrong password?)'; exit 1 ;;
+  off) w disconnect >/dev/null; echo off ;;
+  on) w reconnect >/dev/null; echo on ;;
+  *) echo 'Usage: vegas-wifi scan|connect|status|forget [ssid]|list [--scan]|join SSID|on|off' >&2; exit 2 ;;
 esac

@@ -176,7 +176,7 @@ Item {
 
   // Back and Home first dismiss a shell overlay (the Omarchy menu, app
   // launcher) if one is open, like Android's back closing a dialog.
-  readonly property var dismissable: ["omarchy.menu", "omarchy.clipboard", "omarchy.emojis"]
+  readonly property var dismissable: ["vegas.quick", "omarchy.menu", "omarchy.clipboard", "omarchy.emojis"]
   function openOverlay() {
     if (!root.shell || typeof root.shell.isPluginOpen !== "function") return ""
     for (var i = 0; i < root.dismissable.length; i++) {

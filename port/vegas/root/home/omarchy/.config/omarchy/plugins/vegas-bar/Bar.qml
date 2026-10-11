@@ -1054,6 +1054,24 @@ Item {
         // would strand this surface's tally and hold the peek open for good.
         Component.onDestruction: if (hovered) root.setBarHovered(false)
       }
+
+      // Phone: swipe down on the status bar opens quick settings. The empty
+      // bar background is CenterGestureArea (handles it on release); this
+      // pointer handler covers swipes that start on a widget, taking the touch
+      // over only once it is a vertical drag so taps still reach the widget.
+      DragHandler {
+        target: null
+        enabled: root.position === "top" && !root.vertical
+        xAxis.enabled: false
+        grabPermissions: PointerHandler.CanTakeOverFromAnything
+        // activeTranslation is already reset when active turns false.
+        property real lastDy: 0
+        onActiveTranslationChanged: if (active) lastDy = activeTranslation.y
+        onActiveChanged: {
+          if (active) lastDy = 0
+          else if (lastDy >= 24) root.openQuickSettings()
+        }
+      }
     }
 
     PopupWindow {
@@ -1407,6 +1425,11 @@ Item {
     }
   }
 
+  // Phone: swipe down on the status bar (vegas.quick).
+  function openQuickSettings() {
+    if (root.shell && typeof root.shell.summon === "function") root.shell.summon("vegas.quick", "")
+  }
+
   component CenterGestureArea: MouseArea {
     id: gestureArea
 
@@ -1446,6 +1469,8 @@ Item {
       if (!(mouse.buttons & Qt.LeftButton)) return
 
       if (!dragging) {
+        // Phone: the bar can't move; a drag here is the quick-settings swipe.
+        if (root.phoneLocked) return
         var distance = Math.abs(mouse.x - pressedX) + Math.abs(mouse.y - pressedY)
         if (distance < dragThreshold) return
         startDrag(mouse.x, mouse.y)
@@ -1457,6 +1482,10 @@ Item {
     }
 
     onReleased: function(mouse) {
+      if (root.phoneLocked && !dragging) {
+        if (mouse.y - pressedY >= 24) root.openQuickSettings()
+        return
+      }
       if (!dragging) return
       dragging = false
       suppressClick = true

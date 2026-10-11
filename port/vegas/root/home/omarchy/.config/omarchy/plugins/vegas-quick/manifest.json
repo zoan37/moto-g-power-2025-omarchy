@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "vegas.quick",
+  "name": "Quick settings",
+  "version": "1.0.0",
+  "author": "Vegas phone port",
+  "description": "Pull-down shade: Wi-Fi (with a network picker), brightness, volume, Do Not Disturb, keyboard, screenshot, power and recent notifications",
+  "kinds": ["panel"],
+  "keepLoaded": true,
+  "entryPoints": {"panel": "Quick.qml"}
+}
