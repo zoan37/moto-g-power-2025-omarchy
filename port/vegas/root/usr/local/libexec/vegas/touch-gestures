@@ -1,0 +1,16 @@
+#!/bin/bash
+# Double-tap to wake (Motorola ilitek_v3_mmi touch driver, ILI_DOUBLE_TAP_CTRL
+# build). /sys/devices/virtual/touchscreen/primary/gesture reads 06 at boot, but
+# the driver only arms gesture mode when the value is written (0x31 = double tap
+# on, 0x20 = single tap off; decimal for its sscanf). Armed, the touch controller
+# stays in low-power gesture mode while the panel is off and reports a double
+# tap on the "double-tap" input device; vegas-power-key turns the screen on.
+# Opt out with /var/lib/vegas/no-double-tap.
+g=/sys/devices/virtual/touchscreen/primary/gesture
+[[ -w $g ]] || exit 0
+if [[ -e /var/lib/vegas/no-double-tap ]]; then
+  echo 48 >"$g"          # 0x30 double tap off
+else
+  echo 32 >"$g"          # 0x20 single tap off (pocket touches)
+  echo 49 >"$g"          # 0x31 double tap on
+fi

@@ -163,6 +163,7 @@ fi
 
 # Phone fixes to Omarchy's own shell files (idempotent), before the desktop.
 "$helper/omarchy-patches" >>/var/log/vegas/init.log 2>&1
+"$helper/touch-gestures"
 
 # Sound card (vendor audio modules + speaker calibration), in the background.
 "$helper/audio-prepare" >>/var/log/vegas/audio.log 2>&1 &

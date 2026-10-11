@@ -39,3 +39,5 @@ done
 exit 0
 # Phone fixes to Omarchy's own shell files (idempotent).
 /usr/local/libexec/vegas/omarchy-patches
+# Double-tap to wake.
+/usr/local/libexec/vegas/touch-gestures
