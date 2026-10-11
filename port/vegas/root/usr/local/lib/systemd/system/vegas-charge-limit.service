@@ -1,0 +1,14 @@
+# Charge limit loop (/usr/local/sbin/vegas-charge-limit; off unless a limit is set).
+[Unit]
+Description=Battery charge limit (Motorola adaptive-charging switch)
+After=local-fs.target
+
+[Service]
+ExecStart=/usr/local/sbin/vegas-charge-limit run
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/vegas/charge-limit.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

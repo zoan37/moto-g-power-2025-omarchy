@@ -144,6 +144,10 @@ fi
 cap=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null)
 [[ $cap =~ ^[0-9]+$ && $cap -ge 0 ]] && ok "battery ${cap}%" || warn "battery capacity unreadable"
 pgrep -f /usr/lib/upowerd >/dev/null && ok "UPower running" || warn "UPower not running (no battery indicator)"
+l=$(cat /var/lib/vegas/charge-limit 2>/dev/null)
+systemctl is-active -q vegas-charge-limit 2>/dev/null && ok "charge limit ${l:+$l%}${l:-off} (vegas-charge-limit)" ||
+  warn "charge limit service not running"
+systemctl is-active -q vegas-battery-guard.timer 2>/dev/null && ok "critical-battery guard" || warn "critical-battery guard timer not active"
 ip -4 -br addr show wlan0 2>/dev/null | grep -q UP && ok "Wi-Fi up" || warn "Wi-Fi down"
 
 echo
