@@ -3,7 +3,7 @@
 case ${1:-} in reboot|poweroff|fastboot) action=$1;; *) exit 2;; esac
 helper=/usr/local/libexec/vegas
 # Recheck immediately before the syscall, including requests from root CGI.
-# This candidate is pending a cable-disconnected hardware power-off test.
+# Power-off verified on battery (cable out) on 2026-10-11.
 if [[ $action == poweroff ]]; then
   source "$helper/power-source-state"
   if [[ $(vegas_external_power_state) != disconnected ]]; then

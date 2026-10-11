@@ -36,8 +36,8 @@ for ((attempt=0; attempt<50; attempt++)); do
   [[ -S /run/seatd.sock ]] && break
   sleep 0.1
 done
-exit 0
 # Phone fixes to Omarchy's own shell files (idempotent).
 /usr/local/libexec/vegas/omarchy-patches
 # Double-tap to wake.
 /usr/local/libexec/vegas/touch-gestures
+exit 0
