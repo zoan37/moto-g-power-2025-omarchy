@@ -6,8 +6,9 @@ user=omarchy
 runtime=/run/user/1000
 # Desktop user's device groups (sysusers creates input on systemd boots).
 getent group input >/dev/null || groupadd --system input
-id -nG "$user" | tr ' ' '\n' | grep -qx input && id -nG "$user" | tr ' ' '\n' | grep -qx video ||
-  usermod -aG input,video "$user"
+for g in input video audio; do
+  id -nG "$user" | tr ' ' '\n' | grep -qx "$g" || usermod -aG "$g" "$user"
+done
 # logind keeps the lingering user's runtime directory; native-init's fallback.
 if [[ ! -d $runtime ]]; then
   mkdir -p "$runtime"

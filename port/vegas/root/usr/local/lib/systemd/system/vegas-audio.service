@@ -1,0 +1,19 @@
+# Sound card (vendor audio modules, speaker calibration), in the background like
+# native-init: audio-prepare loads the modules, then holds its one-strike boot
+# marker for 60 s. The vendor modules are never unloaded, so this unit refuses
+# manual stop/restart.
+[Unit]
+Description=MediaTek sound card (vendor modules, speaker calibration)
+# Vendor module loads stay in native-init's order: GPU, video decoder, audio.
+After=local-fs.target vegas-gpu.service vegas-video.service
+RefuseManualStop=yes
+
+[Service]
+Type=exec
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/vegas/audio-prepare
+StandardOutput=append:/var/log/vegas/audio.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

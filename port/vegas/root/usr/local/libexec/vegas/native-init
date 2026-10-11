@@ -58,7 +58,7 @@ fi
 udevadm trigger --action=add
 udevadm settle --timeout=5
 getent group input >/dev/null || groupadd --system input
-usermod -aG input,video omarchy
+usermod -aG input,video,audio omarchy
 chgrp input /dev/input/event*
 chmod 0660 /dev/input/event*
 SEATD_VTBOUND=0 seatd -u omarchy -l debug >>/var/log/vegas/seatd.log 2>&1 &
@@ -160,6 +160,9 @@ fi
 # Hardware video decode (MediaTek decoder + mtk_stateful VA-API for Chrome),
 # in the background so a slow or failing module load never delays the desktop.
 "$helper/video-prepare" >>/var/log/vegas/video.log 2>&1 &
+
+# Sound card (vendor audio modules + speaker calibration), in the background.
+"$helper/audio-prepare" >>/var/log/vegas/audio.log 2>&1 &
 
 # Battery percentage: switch MediaTek's fuel gauge from waiting for Android's
 # daemon to its kernel algorithm.

@@ -1,0 +1,70 @@
+#!/bin/bash
+# Sound card: load MediaTek's audio chain (vendor_dlkm modules kept in
+# /opt/vegas-audio/modules) so the mt6835-mt6377 card binds: AFE, MT6377 codec,
+# three Awinic smart amps, plus the SCP/ADSP modules the machine driver links
+# against (notes/audio-20261011.md). PipeWire picks the card up through UCM.
+# Opt out with /var/lib/vegas/no-audio. A boot that doesn't stay up for a minute
+# after loading counts as a strike; one strike disables it until the file
+# /var/lib/vegas/audio-disabled-unstable is removed.
+set -u
+modules=/opt/vegas-audio/modules
+state=/var/lib/vegas
+pending=$state/audio-boot-pending
+mkdir -p "$state"
+[[ -e $state/no-audio ]] && { echo 'audio disabled by no-audio'; exit 0; }
+[[ -e $state/audio-disabled-unstable ]] && { echo 'audio disabled after an unconfirmed boot'; exit 0; }
+if [[ -e $pending ]]; then
+  mv -f "$pending" "$state/audio-disabled-unstable"
+  echo 'previous boot with audio modules did not stay up; disabled'
+  exit 0
+fi
+[[ -d $modules ]] || exit 0
+
+# Per-unit speaker calibration (Re of each AW88394, written by the factory to
+# Android's persist partition). The amp driver reads it from this fixed path
+# when a stream starts; without it the amps' protection uses the generic Re.
+cali=/mnt/vendor/persist/factory/audio/aw_cali.bin
+if [[ ! -s $cali ]]; then
+  persist=$(grep -l '^PARTNAME=persist$' /sys/class/block/sd*/uevent 2>/dev/null | head -1)
+  if [[ -n $persist ]]; then
+    dev=/dev/$(basename "$(dirname "$persist")") mnt=/run/vegas-persist
+    mkdir -p "$mnt" "$(dirname "$cali")"
+    if mount -o ro,noload "$dev" "$mnt"; then
+      cp "$mnt/factory/audio/aw_cali.bin" "$cali" 2>/dev/null && echo "speaker calibration: $(tr -s ' ' <"$cali")"
+      umount "$mnt"
+    fi
+  fi
+fi
+
+: >"$pending"; sync
+# Dependency order from vendor_dlkm modules.dep. nvmem-mt635x-efuse: the MT6377
+# codec defers its probe until it can read the PMIC efuse (headphone trim).
+for m in mtk-btcvsd snd-soc-aw883xx adsp mtk-afe-external scp mtk-scp-audiocommon \
+  audio_ipi snd-soc-audiodsp-common mtk-scp-audio mtk-sp-spk-amp snd-soc-mtk-common \
+  snd-soc-mt6835-afe nvmem-mt635x-efuse mt6377-accdet snd-soc-mt6377 mt6835-mt6377; do
+  [[ -d /sys/module/${m//-/_} ]] && continue
+  if ! timeout -k 2 20 insmod "$modules/$m.ko"; then
+    echo "insmod $m failed"; rm -f "$pending"; exit 1
+  fi
+done
+
+for _ in $(seq 1 20); do grep -q '\[mt6835mt6377 *\]' /proc/asound/cards && break; sleep 1; done
+if ! grep -q '\[mt6835mt6377 *\]' /proc/asound/cards; then
+  echo 'no mt6835mt6377 card after 20 s'; rm -f "$pending"; exit 1
+fi
+# Under systemd, udev creates /dev/snd and runs alsactl restore (UCM BootSequence).
+# Under native-init, do both here.
+if [[ $(cat /proc/1/comm) != systemd ]]; then
+  mkdir -p /dev/snd
+  for d in /sys/class/sound/*/dev; do
+    n=$(basename "$(dirname "$d")")
+    IFS=: read -r ma mi <"$d"
+    [[ -e /dev/snd/$n ]] || mknod -m 660 "/dev/snd/$n" c "$ma" "$mi"
+    chgrp audio "/dev/snd/$n"
+  done
+  alsactl restore mt6835mt6377 >/dev/null 2>&1
+fi
+echo "sound card ready: $(grep -m1 mt6835mt6377 /proc/asound/cards)"
+
+sleep 60
+rm -f "$pending"; sync

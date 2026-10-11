@@ -67,6 +67,17 @@ else
   [[ $(stat -c %G /dev/dma_heap/mtk_mm 2>/dev/null) == video ]] && ok "mtk_mm heap open to video" || warn "mtk_mm heap root-only (slower system heap fallback)"
 fi
 
+echo "Audio"
+if [[ -e /var/lib/vegas/no-audio ]]; then warn "disabled (no-audio)"
+elif [[ -e /var/lib/vegas/audio-disabled-unstable ]]; then fail "disabled after an unconfirmed boot (remove /var/lib/vegas/audio-disabled-unstable)"
+else
+  grep -q '\[mt6835mt6377 *\]' /proc/asound/cards && ok "sound card" || fail "no sound card"
+  [[ -s /mnt/vendor/persist/factory/audio/aw_cali.bin ]] && ok "speaker calibration" || warn "no speaker calibration (generic Re)"
+  id -nG omarchy | tr ' ' '\n' | grep -qx audio && ok "omarchy in audio group" || fail "omarchy not in audio group"
+  sinks=$(runuser -u omarchy -- env XDG_RUNTIME_DIR=/run/user/1000 wpctl status 2>/dev/null | sed -n '/^Audio/,/^Video/p' | grep -c 'Built-in Audio Speaker')
+  (( sinks > 0 )) && ok "PipeWire speaker sink" || warn "no PipeWire speaker sink"
+fi
+
 echo "Desktop"
 pgrep -x Hyprland >/dev/null && ok "Hyprland running" || fail "Hyprland not running"
 pgrep -f 'quickshell -n' >/dev/null && ok "Omarchy shell running" || fail "Omarchy shell not running"

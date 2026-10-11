@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Follow the 3.5 mm jack like Android: headphones in -> play through them (and
+use the headset mic when the plug has one); headphones out -> pause media, then
+back to the speaker, so nothing suddenly plays out loud.
+
+The MT6377 accdet driver reports the jack only as an input device
+("mt6835-mt6377 Headset Jack", SW_HEADPHONE_INSERT / SW_MICROPHONE_INSERT), with
+no ALSA jack control, so PipeWire can't see plug state by itself
+(notes/audio-20261011.md). Runs in the desktop session (autostart.lua).
+"""
+import fcntl
+import glob
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+
+EV_SYN, EV_SW = 0, 5
+SW_HEADPHONE_INSERT, SW_MICROPHONE_INSERT = 2, 4
+EVENT = struct.Struct('llHHi')        # struct input_event on aarch64
+CARD = 'alsa_card.platform-soc_sound'
+SINK = 'alsa_output.platform-soc_sound.HiFi__{}__sink'
+PROFILE_MIC = 'HiFi (Headphones, Mic, Speaker)'
+PROFILE_HEADSET = 'HiFi (Headphones, Headset, Speaker)'
+
+
+def log(*args):
+    print(time.strftime('%H:%M:%S'), *args, flush=True)
+
+
+def jack_device():
+    for path in glob.glob('/sys/class/input/event*/device/name'):
+        with open(path) as f:
+            if f.read().strip().endswith('Headset Jack'):
+                return '/dev/input/' + path.split('/')[4]
+    return None
+
+
+def switches(fd):
+    buf = bytearray(8)
+    fcntl.ioctl(fd, (2 << 30) | (len(buf) << 16) | (ord('E') << 8) | 0x1b, buf)  # EVIOCGSW
+    bits = int.from_bytes(buf, 'little')
+    return bool(bits >> SW_HEADPHONE_INSERT & 1), bool(bits >> SW_MICROPHONE_INSERT & 1)
+
+
+def pactl(*args):
+    return subprocess.run(['pactl', *args], capture_output=True, text=True).returncode == 0
+
+
+def pause_media():
+    out = subprocess.run(['busctl', '--user', 'list', '--no-legend'], capture_output=True, text=True).stdout
+    for name in (line.split()[0] for line in out.splitlines() if line.startswith('org.mpris.MediaPlayer2.')):
+        subprocess.run(['busctl', '--user', 'call', name, '/org/mpris/MediaPlayer2',
+                        'org.mpris.MediaPlayer2.Player', 'Pause'], capture_output=True)
+
+
+def apply(headphone, mic, first):
+    if not headphone and not first:
+        pause_media()
+    profile = PROFILE_HEADSET if headphone and mic else PROFILE_MIC
+    sink = SINK.format('Headphones' if headphone else 'Speaker')
+    # PipeWire may still be starting (or re-creating sinks after a profile switch).
+    for _ in range(20):
+        if pactl('set-card-profile', CARD, profile) and pactl('set-default-sink', sink):
+            log('headphones' if headphone else 'speaker', '+ headset mic' if headphone and mic else '')
+            return
+        time.sleep(0.5)
+    log('could not switch to', sink, profile)
+
+
+def main():
+    while True:
+        dev = jack_device()
+        if dev:
+            break
+        time.sleep(2)          # the sound card loads in the background at boot
+    fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+    state = switches(fd)
+    apply(*state, first=True)
+    pending = dict(zip((SW_HEADPHONE_INSERT, SW_MICROPHONE_INSERT), state))
+    while True:
+        select.select([fd], [], [])
+        try:
+            data = os.read(fd, EVENT.size * 64)
+        except BlockingIOError:
+            continue
+        for i in range(0, len(data) - EVENT.size + 1, EVENT.size):
+            _, _, etype, code, value = EVENT.unpack_from(data, i)
+            if etype == EV_SW and code in pending:
+                pending[code] = bool(value)
+            elif etype == EV_SYN:
+                new = (pending[SW_HEADPHONE_INSERT], pending[SW_MICROPHONE_INSERT])
+                if new != state:
+                    state = new
+                    apply(*state, first=False)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

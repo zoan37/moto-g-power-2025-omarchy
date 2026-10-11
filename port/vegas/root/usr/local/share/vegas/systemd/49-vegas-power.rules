@@ -10,3 +10,15 @@ polkit.addRule(function (action, subject) {
         return polkit.Result.NO;
     }
 });
+
+// RealtimeKit (PipeWire's realtime audio threads). Its default policy allows active
+// local sessions only; the phone's desktop runs in the lingering user manager's seatless
+// session, which logind never marks active, so polkit refused and audio ran at normal
+// priority.
+polkit.addRule(function (action, subject) {
+    if ((action.id == "org.freedesktop.RealtimeKit1.acquire-real-time" ||
+         action.id == "org.freedesktop.RealtimeKit1.acquire-high-priority") &&
+        subject.isInGroup("audio")) {
+        return polkit.Result.YES;
+    }
+});
