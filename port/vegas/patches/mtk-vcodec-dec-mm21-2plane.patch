@@ -1,0 +1,107 @@
+mtk-vcodec: offer M21S as two-plane MM21; CPU addresses for MMAP buffers
+
+For MotorolaMobilityLLC/kernel-mtk android-16-release-w1ve36h.10-12r3
+(apply with -p1 at the kernel root). Builds mtk-vcodec-dec-v1.ko for vegas,
+see scripts/build-vegas-vcodec-modules.sh and third_party/kernel/results/vcodec/BUILD.md.
+
+- get_supported_format(): every MTK_FMT_FRAME entry with fourcc M21S from the
+  VCP firmware becomes MM21 ('MM21' = V4L2_PIX_FMT_MT21 here, mainline
+  V4L2_PIX_FMT_MM21) with num_planes = 2.
+- mtk_vdec_fixup_picinfo(), after both GET_PARAM_PIC_INFO calls: the firmware
+  names its output format in picinfo.fourcc (M21S), which G_FMT and
+  pic-info updates look up with mtk_find_fmt_by_pixel(); translate it to MM21
+  and, if fb_sz[1] is 0, split fb_sz[0] into luma (buf_w * buf_h) and chroma.
+- After vdec_if_init(): SET_PARAM_FB_NUM_PLANES with the CAPTURE format's plane
+  count (only stored in the shared vsi; S_FMT before init cannot reach it).
+- mtk_vdec_worker(): set bs_buffer.va and fb_base[i].va from vb2_plane_vaddr()
+  always, not only when mtk_v4l2_dbg_level > 0 (MMAP OUTPUT buffers otherwise
+  fail with "src_addr is NULL").
+
+--- a/drivers/media/platform/mtk-vcodec/mtk_vcodec_dec.c
++++ b/drivers/media/platform/mtk-vcodec/mtk_vcodec_dec.c
+@@ -150,6 +150,15 @@
+ 			return;
+ 		}
+ 
++		/* vegas: offer the firmware's M21S as two-plane MM21 */
++		for (i = 0; i < MTK_MAX_DEC_CODECS_SUPPORT; i++) {
++			if (mtk_vdec_formats[i].type == MTK_FMT_FRAME &&
++			    mtk_vdec_formats[i].fourcc == V4L2_PIX_FMT_MT21S) {
++				mtk_vdec_formats[i].fourcc = V4L2_PIX_FMT_MT21;
++				mtk_vdec_formats[i].num_planes = 2;
++			}
++		}
++
+ 		for (i = 0; i < MTK_MAX_DEC_CODECS_SUPPORT; i++) {
+ 			if (mtk_vdec_formats[i].fourcc != 0)
+ 				mtk_v4l2_debug(1,
+@@ -248,6 +257,23 @@
+ 	return NULL;
+ }
+ 
++/*
++ * vegas: the firmware reports M21S (luma and chroma in one buffer); M21S is
++ * offered as two-plane MM21 (get_supported_format), so translate the picture
++ * info too. If the firmware gave one size for both planes, split it: luma is
++ * buf_w * buf_h, chroma the rest.
++ */
++static void mtk_vdec_fixup_picinfo(struct vdec_pic_info *pic)
++{
++	if (pic->fourcc != V4L2_PIX_FMT_MT21S)
++		return;
++	pic->fourcc = V4L2_PIX_FMT_MT21;
++	if (pic->fb_sz[1] == 0 && pic->fb_sz[0] > pic->buf_w * pic->buf_h) {
++		pic->fb_sz[1] = pic->fb_sz[0] - pic->buf_w * pic->buf_h;
++		pic->fb_sz[0] = pic->buf_w * pic->buf_h;
++	}
++}
++
+ static struct mtk_video_fmt *mtk_find_fmt_by_pixel(unsigned int pixelformat)
+ {
+ 	struct mtk_video_fmt *fmt;
+@@ -1436,6 +1462,7 @@
+ 					 ctx->id);
+ 		return;
+ 	}
++	mtk_vdec_fixup_picinfo(&ctx->last_decoded_picinfo);
+ 
+ 	if (ctx->last_decoded_picinfo.pic_w == 0 ||
+ 		ctx->last_decoded_picinfo.pic_h == 0 ||
+@@ -1652,8 +1679,7 @@
+ 
+ 		mutex_lock(&ctx->buf_lock);
+ 		for (i = 0; i < num_planes; i++) {
+-			if (mtk_v4l2_dbg_level > 0)
+-				pfb->fb_base[i].va = vb2_plane_vaddr(dst_buf, i);
++			pfb->fb_base[i].va = vb2_plane_vaddr(dst_buf, i);
+ 			pfb->fb_base[i].dma_addr =
+ 				vb2_dma_contig_plane_dma_addr(dst_buf, i);
+ 			pfb->fb_base[i].size = ctx->picinfo.fb_sz[i];
+@@ -1722,8 +1748,7 @@
+ 	}
+ 
+ 	buf = &src_buf_info->bs_buffer;
+-	if (mtk_v4l2_dbg_level > 0)
+-		buf->va = vb2_plane_vaddr(src_buf, 0);
++	buf->va = vb2_plane_vaddr(src_buf, 0);
+ 	buf->dma_addr = vb2_dma_contig_plane_dma_addr(src_buf, 0);
+ 	buf->size = (size_t)src_buf->planes[0].bytesused;
+ 	buf->length = (size_t)src_buf->planes[0].length;
+@@ -3444,6 +3469,9 @@
+ 			return;
+ 		}
+ 		ctx->state = MTK_STATE_INIT;
++		/* vegas: plane count of the CAPTURE format (2 for MM21) */
++		vdec_if_set_param(ctx, SET_PARAM_FB_NUM_PLANES,
++			(void *) &ctx->q_data[MTK_Q_DATA_DST].fmt->num_planes);
+ 	}
+ 
+ 	mtk_vdec_check_vcp_active(ctx, false, true, "start"); // cnt+1 before state change
+@@ -3689,6 +3717,7 @@
+ 					 ctx->id);
+ 		return;
+ 	}
++	mtk_vdec_fixup_picinfo(&ctx->last_decoded_picinfo);
+ 
+ 	dst_q_data = &ctx->q_data[MTK_Q_DATA_DST];
+ 	fourcc = ctx->last_decoded_picinfo.fourcc;
