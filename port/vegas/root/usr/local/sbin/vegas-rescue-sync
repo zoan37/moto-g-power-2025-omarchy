@@ -1,0 +1,31 @@
+#!/bin/bash
+# Refresh the microSD rescue copy (/omarchy on the card's ext4 "vegas-arch") from
+# the running internal root, e.g. before a system upgrade: the ramdisk boots the
+# card copy when the internal root fails (with the red SD badge), so it should be
+# a recent, known-good state. Mirrors with rsync --delete, skipping runtime
+# directories, caches and the journal. Only from an internal (loop7) boot.
+#
+#   vegas-rescue-sync          refresh the copy (progress in /var/log/vegas/rescue-sync.log)
+#   vegas-rescue-sync --dry-run
+set -euo pipefail
+dev=/dev/mmcblk0p1
+mnt=/run/vegas-rescue
+dry=()
+[[ ${1:-} == --dry-run ]] && dry=(--dry-run)
+[[ $(findmnt -n -o SOURCE /) == /dev/loop7 ]] || { echo 'Run from an internal (UFS) boot.' >&2; exit 1; }
+[[ $(blkid -o value -s LABEL "$dev" 2>/dev/null) == vegas-arch ]] || { echo "no vegas-arch card at $dev" >&2; exit 1; }
+mkdir -p "$mnt"
+mount "$dev" "$mnt"
+trap 'sync; umount "$mnt" 2>/dev/null || true' EXIT
+[[ -d $mnt/omarchy/etc ]] || { echo 'no /omarchy rescue root on the card' >&2; exit 1; }
+need=$(du -sx --exclude=/var/cache --exclude=/var/log/journal --exclude=/home/omarchy/.cache / 2>/dev/null | cut -f1)
+have=$(( $(df --output=avail "$mnt" | tail -1) + $(du -sx "$mnt/omarchy" | cut -f1) ))
+(( need < have )) || { echo "card too small: need ${need}K, have ${have}K" >&2; exit 1; }
+echo "$(date -Is) rescue sync: ${need}K"
+rsync -aHAXx --numeric-ids --delete --delete-excluded "${dry[@]}" --info=stats1 \
+  --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' --exclude='/run/*' --exclude='/tmp/*' \
+  --exclude='/mnt/*' --exclude='/var/tmp/*' --exclude='/var/cache/*' --exclude='/var/log/journal/*' \
+  --exclude='/home/omarchy/.cache/*' --exclude='/lost+found' \
+  / "$mnt/omarchy/"
+date -Is >"$mnt/omarchy/var/lib/vegas/rescue-synced"
+echo "$(date -Is) rescue sync done"
