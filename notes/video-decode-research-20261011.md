@@ -183,3 +183,39 @@ Linux doesn't use it for web video anyway).
 - FFmpeg `libavcodec/v4l2_fmt.c`; GStreamer `sys/v4l2/gstv4l2object.c`
 - Firefox V4L2-M2M (116): https://www.omglinux.com/firefox-hardware-acceleration-raspberry-pi/ ; Firefox 153 Vulkan
   Video: https://www.omgubuntu.co.uk/2026/07/firefox-vulkan-video-decoding-nvidia
+
+## On-device results (2026-10-11)
+
+- **Bring-up:** `insmod` vcp.ko → mtk-vcodec-common.ko → mtk-vcodec-dec-v1.ko → vdec-fmt.ko (from
+  vendor_dlkm; all other dependencies are already loaded by the vendor_boot set). The driver logs
+  `decoder registered as /dev/video0`. There's no devtmpfs, so create the node with `mknod` from
+  `/sys/class/video4linux/video0/dev`. The VCP starts on first open.
+- **Firmware capability table** (dumped with `mtk_v4l2_dbg_level=1` at insmod): one frame format,
+  `M21S`, 1 plane; bitstream formats H264, H265, HEIF, MPG4, H263, VP90 (max 2560×1440). No AV1, no
+  VP8.
+- **`M21S` is MM21:** a decoded 1080p frame detiled as 16×32 luma / 16×16 chroma tiles (Y then
+  CbCr, 1920×1088, 3,133,440 bytes) matches a software decode of the same frame.
+- **Decoding works** with `bringup/vdec-test.c` (stateful flow, one access unit per OUTPUT buffer):
+  1080p H.264 at 64 fps with dmabufs from the `mtk_mm` heap, 39 fps from `system`.
+- **MMAP OUTPUT buffers** fail with `src_addr is NULL` unless `mtk_v4l2_dbg_level > 0`: the driver
+  only takes `vb2_plane_vaddr()` in debug mode (mtk_vcodec_dec.c ~1727). Setting the level to 1 makes
+  them work (47 fps). With plain MMAP and no debug level, the VCP rejects the IPI (`ack fail -5`).
+- **Never `rmmod` / reload `mtk-vcodec-dec-v1`:** unloading and reloading it rebooted the phone
+  (same lesson as the Chromebook's mtk-vcodec).
+
+### Chromium (Arch Linux ARM `chromium` 151, built with `use_v4l2_codec`)
+
+Flags: `--enable-features=AcceleratedVideoDecoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL --disable-gpu-sandbox`.
+Chromium's Linux device scan opens `/dev/video0`…`/dev/video255` and keeps a decoder only if one
+of its CAPTURE formats is a pixel format Chromium knows (`Fourcc::FromUint32`). That list includes
+MM21 but not `M21S`, so the device was skipped.
+
+- `bringup/v4l2-mm21-shim.c` (LD_PRELOAD) reports `M21S` as `MM21`. Gotcha: Chromium passes
+  ioctl requests as a signed `int`, so they arrive sign-extended (0xFFFFFFFFC0405602). Compare only
+  the low 32 bits, as the kernel does.
+- With the shim, Chromium picks `V4L2VideoDecoder` and handles the resolution change (MM21
+  1920×1088, 9 CAPTURE buffers), then fails in `V4L2FormatToVideoFrameLayout()`: for a single
+  buffer it only derives the second plane for NV12/YUV420, not MM21. MM21 has to come with 2 planes.
+- The firmware IPI already carries separate luma/chroma addresses when a frame has 2 planes
+  (`vdec_vcp_if.c` ~1427, `c_fb_dma`). Next step: rebuild `mtk-vcodec-dec-v1` with M21S → MM21
+  2-plane and the MMAP address fix (`port/vegas/patches/`, built on the SER8).
