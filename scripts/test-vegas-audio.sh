@@ -45,7 +45,7 @@ MODULES=(
 	mtk_low_battery_throttling mtk_dynamic_loading_throttling mtk_mdpm mtk_pbm
 	adsp mtk-afe-external scp mtk-scp-audiocommon audio_ipi snd-soc-audiodsp-common
 	mtk-scp-audio mtk-sp-spk-amp rps_perf ccmni ccci_util_lib ccci_auxadc ccci_md_all
-	snd-soc-mtk-common snd-soc-mt6835-afe mt6377-accdet snd-soc-mt6377 mt6835-mt6377
+	snd-soc-mtk-common snd-soc-mt6835-afe nvmem-mt635x-efuse mt6377-accdet snd-soc-mt6377 mt6835-mt6377
 )
 FW=/usr/lib/firmware/aw883xx_acf.bin
 FW_SHA=c4c49f390ccc157cdb7098fabcbb8a2c1c0777ae229001aa6a4499860774ea6c
