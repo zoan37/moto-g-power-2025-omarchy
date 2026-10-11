@@ -86,6 +86,13 @@ else
   systemctl is-active -q bluetooth 2>/dev/null && ok "bluetoothd running" || warn "bluetoothd not running"
 fi
 
+echo "Sensors"
+if [[ -e /var/lib/vegas/no-sensors ]]; then warn "disabled (no-sensors)"
+else
+  [[ -c /dev/hf_manager ]] && ok "sensor hub (/dev/hf_manager)" || fail "no sensor hub"
+  pgrep -f /usr/local/sbin/vegas-autobrightness >/dev/null && ok "adaptive brightness daemon" || warn "adaptive brightness not running"
+fi
+
 echo "Desktop"
 pgrep -x Hyprland >/dev/null && ok "Hyprland running" || fail "Hyprland not running"
 pgrep -f 'quickshell -n' >/dev/null && ok "Omarchy shell running" || fail "Omarchy shell not running"
